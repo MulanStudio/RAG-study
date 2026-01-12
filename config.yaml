@@ -1,0 +1,62 @@
+system:
+  # 比赛时设为 True，强制使用 VLM
+  use_vlm: true
+  model_name: "qwen2.5:3b"
+  vlm_model_name: "llava"
+  embedding_model: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  reranker_model: "BAAI/bge-reranker-base"
+
+indexing:
+  chunk_size_parent: 2000
+  chunk_overlap_parent: 200
+  chunk_size_child: 400
+  chunk_overlap_child: 50
+
+retrieval:
+  # 混合检索权重
+  vector_weight: 0.7
+  bm25_weight: 0.3
+  
+  # 分组召回 Top-K 设置
+  k_excel: 10
+  k_word: 5
+  k_image: 3
+  k_tech: 5
+  k_general: 5
+  
+  # 针对财务问题的动态 Boost K值
+  k_financial_boost: 15
+
+prompts:
+  # 问题改写 Promot
+  rewrite: |
+    You are a question re-writer that converts an input question to a better version optimized for vectorstore retrieval.
+    Input Question: {original_query}
+    Output ONLY the improved question. No other text.
+
+  # 文档打分 Prompt
+  grade: |
+    You are a grader assessing relevance of a retrieved document to a user question.
+    Question: {query}
+    Document: {doc_content}
+    Give a binary score 'yes' or 'no'. Output only 'yes' or 'no'.
+
+  # 最终回答 Prompt
+  generation: |
+    You are a Senior Technical Expert in the Oil & Gas industry.
+    Answer the user's question deeply and accurately based on the Context provided.
+    
+    CRITICAL INSTRUCTIONS:
+    1. If the Context contains technical formulas, explain them briefly.
+    2. If the Context contains financial or geological data, compare the numbers carefully.
+       - Note: 250 mD is much larger than 0.001 mD.
+       - Note: "Failure" or "Lost Pulse" in a drilling log implies "Drilling Stopped".
+    3. When asked for reasons of operational stops, prioritize "Failures" or "Incidents" as the root cause.
+    
+    Context:
+    {context}
+    
+    User Question: {query}
+    
+    Answer:
+

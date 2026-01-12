@@ -1,0 +1,10 @@
+Region,Segment,Metric,Q1_2024,Q2_2024,Q3_2024,YoY_Growth,Notes
+North America,Onshore Drilling,Revenue_M_USD,450.5,465.2,480.1,5.2%,Stable rig count
+North America,Onshore Drilling,EBITDA_Margin,18.5%,19.2%,20.1%,150bps,Cost efficiency improved
+North America,Offshore,Revenue_M_USD,120.0,115.5,130.2,8.5%,New contract in GoM
+International,Latin America,Revenue_M_USD,300.1,310.5,340.0,12.0%,Argentina expansion
+International,Middle East,Revenue_M_USD,800.5,820.0,850.5,3.5%,OPEC+ quotas impact
+Global,Digital Solutions,ARR_M_USD,50.2,55.1,62.8,25.0%,AI adoption surging
+Global,Digital Solutions,Churn_Rate,2.1%,1.9%,1.8%,-14%,Customer retention high
+Total,All,Free_Cash_Flow_M_USD,150.0,180.5,210.0,20.0%,Debt reduction priority
+

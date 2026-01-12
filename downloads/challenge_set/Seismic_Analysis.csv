@@ -1,0 +1,7 @@
+Layer,Depth_Top_m,Depth_Bottom_m,Lithology,Porosity_Avg,Permeability_mD,HC_Saturation,Interpretation
+Zone_A,3200,3250,Sandstone,18%,250,65%,Pay Zone (Oil)
+Zone_B,3250,3300,Shale,4%,0.01,10%,Cap Rock
+Zone_C,3300,3450,Carbonate,12%,50,45%,Possible Gas Cap
+Zone_D,3450,3500,Volcanic,2%,0.001,0%,Basement Rock
+Notes,Seismic Inversion shows high impedance anomaly at 3350m.,,,,
+
