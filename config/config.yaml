@@ -1,0 +1,156 @@
+# =====================================================
+# 🛢️ 油田服务 RAG 系统 - 统一配置文件
+# =====================================================
+# 使用方法：修改此文件即可调整系统行为，无需改代码
+
+# -----------------------------------------------------
+# 📂 数据路径配置
+# -----------------------------------------------------
+data:
+  # 数据根目录（把组委会的数据放这里）
+  root_dir: "data/"
+  
+  # 支持的文件类型
+  supported_formats:
+    documents: ["pdf", "docx", "xlsx", "csv", "md"]
+    images: ["png", "jpg", "jpeg"]
+    videos: ["mp4"]  # 暂不支持
+
+# -----------------------------------------------------
+# 🤖 模型配置
+# -----------------------------------------------------
+models:
+  # LLM 配置 (本地 Ollama)
+  llm:
+    provider: "ollama"
+    model_name: "qwen2.5:3b"
+    base_url: "http://127.0.0.1:11434"
+    temperature: 0.1  # 低温度 = 更确定性的回答
+  
+  # VLM 配置 (图片理解)
+  vlm:
+    enabled: true
+    model_name: "llava"
+    base_url: "http://127.0.0.1:11434"
+  
+  # Embedding 模型
+  embedding:
+    model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+  
+  # Reranker 模型
+  reranker:
+    model_name: "BAAI/bge-reranker-base"
+
+# -----------------------------------------------------
+# 📑 文档处理配置
+# -----------------------------------------------------
+indexing:
+  # Parent-Child 分块策略
+  chunk_size_parent: 2000    # 父块大小（用于生成）
+  chunk_overlap_parent: 200
+  chunk_size_child: 400      # 子块大小（用于检索）
+  chunk_overlap_child: 50
+
+# -----------------------------------------------------
+# 🔍 检索配置
+# -----------------------------------------------------
+retrieval:
+  # 分组召回 Top-K
+  k_excel: 10      # Excel/CSV 数据
+  k_word: 5        # Word 合同
+  k_image: 3       # 图片描述
+  k_tech: 5        # 技术文档
+  k_general: 5     # 通用
+  
+  # 财务问题动态加权
+  k_financial_boost: 15
+  
+  # RRF 融合参数
+  rrf:
+    k: 60          # RRF 常数
+    weights:
+      vector: 1.0
+      bm25: 0.8
+      hyde: 1.2
+  
+  # HyDE 配置
+  hyde:
+    enabled: true
+
+# -----------------------------------------------------
+# 📝 Prompt 模板
+# -----------------------------------------------------
+prompts:
+  # 问题改写 (CRAG)
+  rewrite: |
+    You are a question re-writer that converts an input question to a better version optimized for vectorstore retrieval.
+    Input Question: {original_query}
+    Output ONLY the improved question. No other text.
+
+  # 文档质量评估 (CRAG)
+  grade: |
+    You are a grader assessing relevance of a retrieved document to a user question.
+    Question: {query}
+    Document: {doc_content}
+    Give a binary score 'yes' or 'no'. Output only 'yes' or 'no'.
+
+  # 最终回答生成
+  generation: |
+    You are a Senior Technical Expert in the Oil & Gas industry.
+    Answer the user's question deeply and accurately based on the Context provided.
+    
+    CRITICAL INSTRUCTIONS:
+    1. Answer in the SAME LANGUAGE as the question (中文问题用中文回答).
+    2. If the Context contains specific numbers or data, cite them exactly.
+    3. If you cannot find the answer in the Context, say "根据提供的资料，我无法找到相关信息。"
+    4. Keep your answer concise but complete.
+    
+    Context:
+    {context}
+    
+    User Question: {query}
+    
+    Answer:
+
+  # 比较类问题聚合
+  aggregation_compare: |
+    Based on the retrieved information, provide a comparative analysis.
+    
+    Sub-questions and contexts:
+    {sub_results}
+    
+    Original Question: {original_query}
+    
+    Instructions:
+    1. Clearly state the values for each item being compared
+    2. Use specific numbers from the context
+    3. Highlight key differences
+    
+    Answer:
+
+# -----------------------------------------------------
+# 📊 评测配置
+# -----------------------------------------------------
+evaluation:
+  # 评测模式
+  use_llm_judge: true  # 使用 LLM 作为评判
+  
+  # 通过阈值
+  pass_threshold: 7    # 满分 10 分，7 分及格
+
+# -----------------------------------------------------
+# 🖥️ 系统配置
+# -----------------------------------------------------
+system:
+  # 日志级别
+  log_level: "INFO"
+  
+  # 向量数据库
+  vector_db:
+    persist_dir: ".cache/chroma_db"
+    force_rebuild: false  # true = 每次重建索引
+  
+  # 缓存
+  cache:
+    enabled: true
+    dir: ".cache/"

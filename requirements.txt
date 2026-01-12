@@ -1,0 +1,36 @@
+# RAG-study 项目依赖
+# 安装命令: pip install -r requirements.txt
+
+# LangChain 核心
+langchain>=0.1.0
+langchain-community>=0.0.10
+langchain-core>=0.1.0
+langchain-huggingface>=0.0.1
+langchain-chroma>=0.1.0
+langchain-ollama>=0.1.0
+
+# 向量数据库
+chromadb>=0.4.0
+
+# Embedding & Reranking
+sentence-transformers>=2.2.0
+
+# 文档处理
+pypdf>=3.0.0
+python-docx>=0.8.11
+docx2txt>=0.8
+openpyxl>=3.0.0
+pandas>=1.5.0
+unstructured>=0.10.0
+
+# BM25 检索
+rank_bm25>=0.2.2
+
+# 配置
+pyyaml>=6.0
+
+# Web UI
+streamlit>=1.28.0
+
+# PDF 表格提取
+pdfplumber>=0.10.0

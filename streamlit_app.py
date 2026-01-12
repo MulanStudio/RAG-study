@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import uuid
 import pandas as pd
@@ -19,6 +20,15 @@ from docx import Document as DocxDocument
 
 # 设置环境变量
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
+
+# 添加 src 目录到路径
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+
+# 导入改进模块
+from query_decomposition import QueryDecomposer
+from hyde_retrieval import HyDERetriever
+from rrf_fusion import rrf_fuse
+from pdf_table_extractor import PDFTableExtractor, load_pdfs_with_table_extraction
 
 # --- Config Loader ---
 def load_config():
@@ -169,8 +179,12 @@ def initialize_rag_system():
     docs.extend(load_word_with_structure("downloads"))
     docs.extend(load_excel_as_text("downloads"))
     docs.extend(load_images_with_vlm("downloads"))
-    pdf_loader = DirectoryLoader("downloads", glob="**/*.pdf", loader_cls=PyPDFLoader)
-    docs.extend(pdf_loader.load())
+    
+    # [优化] 使用增强版 PDF 加载器，自动提取表格
+    st.info("📄 正在提取 PDF 表格...")
+    pdf_docs = load_pdfs_with_table_extraction("downloads")
+    docs.extend(pdf_docs)
+    st.success(f"✅ PDF 加载完成: {len(pdf_docs)} 个文档片段")
 
     # 2. Parent-Child Splitting (使用 Config 参数)
     p_size = CONFIG["indexing"]["chunk_size_parent"]
@@ -283,45 +297,103 @@ def rewrite_query(original_query, llm):
     except:
         return original_query
 
-def _retrieve_documents(query, vectorstore, bm25, reranker, splits, docstore):
-    candidate_child_docs = []
-    seen_ids = set()
+def _retrieve_documents(query, vectorstore, bm25, reranker, splits, docstore, llm=None):
+    """
+    混合检索函数 - 使用 RRF 融合多路检索结果
     
-    # 从 Config 读取检索参数
+    检索策略:
+    1. 多路检索（分组向量 + BM25 + HyDE）
+    2. [NEW] RRF 融合（比简单加权更鲁棒）
+    3. Parent Document 还原
+    4. Reranker 精排
+    """
+    debug_info = {"retrieval_sources": []}
     retrieval_conf = CONFIG["retrieval"]
     
+    # ========== 收集多路检索结果（保持排序） ==========
+    all_rankings = []  # [(docs_list, weight, name), ...]
+    
+    # ----- 路径1: 分组向量检索 -----
     filters = [
-        {"name": "Excel/CSV", "filter": {"type": "excel_record"}, "k": retrieval_conf["k_excel"]}, 
-        {"name": "Word", "filter": {"type": "contract_clause"}, "k": retrieval_conf["k_word"]},
-        {"name": "Image", "filter": {"type": "image_caption"}, "k": retrieval_conf["k_image"]},
-        {"name": "Technical", "filter": {"type": "markdown_section"}, "k": retrieval_conf["k_tech"]}, 
-        {"name": "General", "filter": None, "k": retrieval_conf["k_general"]} 
+        {"name": "Excel/CSV", "filter": {"type": "excel_record"}, "k": retrieval_conf["k_excel"], "weight": 1.0}, 
+        {"name": "Word", "filter": {"type": "contract_clause"}, "k": retrieval_conf["k_word"], "weight": 1.0},
+        {"name": "Image", "filter": {"type": "image_caption"}, "k": retrieval_conf["k_image"], "weight": 1.0},
+        {"name": "Technical", "filter": {"type": "markdown_section"}, "k": retrieval_conf["k_tech"], "weight": 1.0}, 
+        {"name": "General", "filter": None, "k": retrieval_conf["k_general"], "weight": 0.8}  # General 权重略低
     ]
     
     for f in filters:
         effective_k = f["k"]
-        if f["name"] == "Excel/CSV" and any(kw in query.lower() for kw in ["growth", "revenue", "%"]):
+        # 动态调整：财务问题时提升 Excel 权重
+        if f["name"] == "Excel/CSV" and any(kw in query.lower() for kw in ["growth", "revenue", "%", "billion"]):
             effective_k = retrieval_conf["k_financial_boost"]
+            f["weight"] = 1.5  # 提升权重
             
         kwargs = {"k": effective_k}
-        if f["filter"]: kwargs["filter"] = f["filter"]
+        if f["filter"]: 
+            kwargs["filter"] = f["filter"]
         try:
             sub_docs = vectorstore.similarity_search(query, **kwargs)
+            # 标记 boost
             for doc in sub_docs:
-                if doc.page_content not in seen_ids:
-                    if f["name"] == "Image" and "image" in query.lower():
-                        doc.metadata["boost"] = True
-                    candidate_child_docs.append(doc)
-                    seen_ids.add(doc.page_content)
-        except: pass
-        
+                if f["name"] == "Image" and "image" in query.lower():
+                    doc.metadata["boost"] = True
+                doc.metadata["retrieval_method"] = f"grouped_{f['name'].lower()}"
+            
+            if sub_docs:
+                all_rankings.append((sub_docs, f["weight"], f"vector_{f['name']}"))
+                debug_info["retrieval_sources"].append(f"vector_{f['name']}: {len(sub_docs)}")
+        except: 
+            pass
+    
+    # ----- 路径2: BM25 关键词检索 -----
     tokenized_query = query.split(" ")
-    bm25_top_n = bm25.get_top_n(tokenized_query, splits, n=10)
-    for doc in bm25_top_n:
-        if doc.page_content not in seen_ids:
-            candidate_child_docs.append(doc)
-            seen_ids.add(doc.page_content)
+    bm25_docs = bm25.get_top_n(tokenized_query, splits, n=15)
+    for doc in bm25_docs:
+        doc.metadata["retrieval_method"] = "bm25"
+    if bm25_docs:
+        all_rankings.append((bm25_docs, 0.8, "bm25"))  # BM25 权重
+        debug_info["retrieval_sources"].append(f"bm25: {len(bm25_docs)}")
+    
+    # ----- 路径3: HyDE 检索 -----
+    hyde_debug = None
+    if llm:
+        try:
+            hyde_retriever = HyDERetriever(llm, vectorstore, reranker=None)
+            hyde_docs, hyde_debug = hyde_retriever.retrieve(
+                query, 
+                k=10,
+                use_hyde=True,
+                combine_with_original=False
+            )
+            for doc in hyde_docs:
+                doc.metadata["retrieval_method"] = "hyde"
+            if hyde_docs:
+                all_rankings.append((hyde_docs, 1.2, "hyde"))  # HyDE 权重较高
+                debug_info["retrieval_sources"].append(f"hyde: {len(hyde_docs)}")
+            if hyde_debug:
+                debug_info["hyde"] = hyde_debug
+        except Exception as e:
+            debug_info["hyde_error"] = str(e)
+    
+    if not all_rankings:
+        return [], debug_info
 
+    # ========== RRF 融合 ==========
+    rankings = [r[0] for r in all_rankings]
+    weights = [r[1] for r in all_rankings]
+    
+    fused_results = rrf_fuse(
+        rankings=rankings,
+        weights=weights,
+        k=60,  # RRF 常数
+        top_n=20  # 多取一些，后面还要 rerank
+    )
+    
+    candidate_child_docs = [doc for doc, score in fused_results]
+    debug_info["rrf_fusion"] = f"Fused {len(rankings)} rankings -> {len(candidate_child_docs)} docs"
+
+    # ========== Parent Document 还原 ==========
     candidate_parents = []
     seen_parent_ids = set()
     for child in candidate_child_docs:
@@ -329,14 +401,18 @@ def _retrieve_documents(query, vectorstore, bm25, reranker, splits, docstore):
         if parent_id and parent_id in docstore:
             if parent_id not in seen_parent_ids:
                 parent_doc = docstore[parent_id]
-                if child.metadata.get("boost"): parent_doc.metadata["boost"] = True
+                if child.metadata.get("boost"): 
+                    parent_doc.metadata["boost"] = True
+                parent_doc.metadata["retrieval_method"] = child.metadata.get("retrieval_method", "unknown")
                 candidate_parents.append(parent_doc)
                 seen_parent_ids.add(parent_id)
         else:
             candidate_parents.append(child)
 
-    if not candidate_parents: return [], []
+    if not candidate_parents: 
+        return [], debug_info
 
+    # ========== Reranker 精排 ==========
     pairs = [[query, doc.page_content] for doc in candidate_parents]
     scores = reranker.predict(pairs)
     doc_score_pairs = list(zip(candidate_parents, scores))
@@ -344,34 +420,96 @@ def _retrieve_documents(query, vectorstore, bm25, reranker, splits, docstore):
     final_pairs = []
     for doc, score in doc_score_pairs:
         final_score = score
-        if doc.metadata.get("boost"): final_score += 0.5
+        # 额外加分规则
+        if doc.metadata.get("boost"): 
+            final_score += 0.5
         if "[EVENT:" in doc.page_content and any(q in query.lower() for q in ["why", "reason", "stop", "fail"]):
             final_score += 2.0
         final_pairs.append((doc, final_score))
         
     final_pairs.sort(key=lambda x: x[1], reverse=True)
-    return [doc for doc, score in final_pairs[:3]], []
+    
+    return [doc for doc, score in final_pairs[:5]], debug_info
 
 def process_query(query, rag_components):
+    """
+    处理用户查询 - 支持 Query Decomposition
+    
+    流程:
+    1. [NEW] 问题分解：判断是否需要拆分为子问题
+    2. 检索：对每个子问题分别检索
+    3. CRAG：评估文档质量，必要时重写查询
+    4. 聚合：合并所有检索结果
+    5. 生成：基于聚合的上下文生成回答
+    """
     vectorstore = rag_components["vectorstore"]
     bm25 = rag_components["bm25"]
     reranker = rag_components["reranker"]
     llm = rag_components["llm"]
     splits = rag_components["splits"]
     docstore = rag_components["docstore"]
-
-    docs, _ = _retrieve_documents(query, vectorstore, bm25, reranker, splits, docstore)
     
+    debug_info = []
+    
+    # ============ Step 1: Query Decomposition ============
+    decomposer = QueryDecomposer(llm)
+    decomposition = decomposer.decompose(query)
+    
+    is_complex = decomposition["is_complex"]
+    sub_queries = decomposition["sub_queries"]
+    aggregation_type = decomposition["aggregation_type"]
+    
+    if is_complex:
+        st.info(f"🔍 检测到复杂问题，分解为 {len(sub_queries)} 个子问题")
+        debug_info.append(f"Query Decomposed: {sub_queries}")
+        debug_info.append(f"Aggregation Type: {aggregation_type}")
+    
+    # ============ Step 2: 分别检索每个子问题 ============
+    all_docs = []
+    sub_results = []  # 记录每个子问题的检索结果
+    seen_contents = set()
+    
+    for i, sub_q in enumerate(sub_queries):
+        if is_complex:
+            with st.status(f"🔍 检索子问题 {i+1}/{len(sub_queries)}: {sub_q[:50]}...", expanded=False):
+                docs, retrieve_debug = _retrieve_documents(sub_q, vectorstore, bm25, reranker, splits, docstore, llm=llm)
+        else:
+            docs, retrieve_debug = _retrieve_documents(sub_q, vectorstore, bm25, reranker, splits, docstore, llm=llm)
+        
+        # 记录 HyDE 调试信息
+        if retrieve_debug.get("hyde"):
+            debug_info.append(f"HyDE: {retrieve_debug['hyde'].get('hypothetical_doc', 'N/A')[:100]}...")
+        
+        # 去重并记录
+        unique_docs = []
+        for doc in docs:
+            if doc.page_content not in seen_contents:
+                unique_docs.append(doc)
+                seen_contents.add(doc.page_content)
+                all_docs.append(doc)
+        
+        # 记录子问题结果（用于聚合生成）
+        context_preview = "\n".join([d.page_content[:300] for d in unique_docs[:2]])
+        sub_results.append({
+            "sub_query": sub_q,
+            "context": context_preview,
+            "docs": unique_docs
+        })
+    
+    # ============ Step 3: CRAG 自我修正 ============
     if not llm:
-        final_docs = docs
-        debug_info = ["CRAG skipped (No LLM)"]
+        final_docs = all_docs[:5]
+        debug_info.append("CRAG skipped (No LLM)")
     else:
-        filtered_docs, needs_rewrite = grade_documents(query, docs, llm)
-        if needs_rewrite:
+        # 对聚合后的文档进行质量评估
+        filtered_docs, needs_rewrite = grade_documents(query, all_docs[:6], llm)
+        
+        if needs_rewrite and not is_complex:
+            # 只对简单问题启用 CRAG 重写（复杂问题已经分解过了）
             st.warning("⚠️ 检索质量预警：正在尝试自我修正...")
             better_query = rewrite_query(query, llm)
             st.info(f"🔄 修正后查询: {better_query}")
-            retry_docs, _ = _retrieve_documents(better_query, vectorstore, bm25, reranker, splits, docstore)
+            retry_docs, _ = _retrieve_documents(better_query, vectorstore, bm25, reranker, splits, docstore, llm=llm)
             final_docs = filtered_docs + retry_docs
             seen = set()
             unique_docs = []
@@ -379,17 +517,31 @@ def process_query(query, rag_components):
                 if d.page_content not in seen:
                     unique_docs.append(d)
                     seen.add(d.page_content)
-            final_docs = unique_docs[:3]
-            debug_info = [f"CRAG Activated. Rewrote to: {better_query}"]
+            final_docs = unique_docs[:5]
+            debug_info.append(f"CRAG Activated. Rewrote to: {better_query}")
         else:
-            final_docs = filtered_docs
-            debug_info = ["CRAG Passed"]
+            final_docs = filtered_docs if filtered_docs else all_docs[:5]
+            debug_info.append("CRAG Passed" if filtered_docs else "CRAG: Using original docs")
 
+    # ============ Step 4: 生成回答 ============
     if llm and final_docs:
-        context = "\n\n".join([d.page_content for d in final_docs])
-        # 从 Config 读取生成 Prompt
-        prompt_template = CONFIG["prompts"]["generation"]
-        prompt = prompt_template.format(context=context, query=query)
+        if is_complex:
+            # 复杂问题：使用聚合 Prompt
+            sub_results_text = ""
+            for i, sr in enumerate(sub_results):
+                sub_results_text += f"\n--- Sub-question {i+1}: {sr['sub_query']} ---\n"
+                sub_results_text += f"Context:\n{sr['context']}\n"
+            
+            agg_prompt = decomposer.get_aggregation_prompt(aggregation_type)
+            prompt = agg_prompt.format(
+                sub_results=sub_results_text,
+                original_query=query
+            )
+        else:
+            # 简单问题：使用原有 Prompt
+            context = "\n\n".join([d.page_content for d in final_docs])
+            prompt_template = CONFIG["prompts"]["generation"]
+            prompt = prompt_template.format(context=context, query=query)
         
         response_obj = llm.invoke(prompt)
         response = response_obj.content

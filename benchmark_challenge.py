@@ -18,6 +18,10 @@ from rank_bm25 import BM25Okapi
 from langchain_ollama import ChatOllama
 from docx import Document as DocxDocument
 
+# 添加 src 目录到路径
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+from hyde_retrieval import HyDERetriever
+
 # 设置环境变量
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
@@ -246,6 +250,17 @@ def run_challenge_benchmark():
             "name": "地质数据分析 (CSV)",
             "q": "Which geological zone has the highest permeability, and what is its lithology?",
             "expected": ["Zone_A", "Sandstone"],
+        },
+        # ========== 新增：Query Decomposition 测试用例 ==========
+        {
+            "name": "比较类问题 (Query Decomposition)",
+            "q": "Compare the revenue growth of Latin America vs Middle East in Q3 2024.",
+            "expected": ["Latin America", "Middle East", "%"],
+        },
+        {
+            "name": "因果推理 + 后续 (Query Decomposition)",
+            "q": "Why did drilling stop on November 12 and what recovery actions were taken?",
+            "expected": ["MWD", "failure", "pulse"],
         }
     ]
     
