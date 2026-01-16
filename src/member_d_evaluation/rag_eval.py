@@ -107,6 +107,36 @@ Reason: <short reason>"""
     return scores, response
 
 
+def _extract_numbers(text: str) -> List[str]:
+    nums = re.findall(r"-?\d+(?:\.\d+)?%?", text)
+    return nums
+
+
+def _adjust_scores(question: str, standard_answer: str, answer: str, scores: Dict[str, int]) -> Dict[str, int]:
+    """对打分做规则微调：数字一致性与冗长惩罚"""
+    std_nums = _extract_numbers(standard_answer)
+    ans_nums = _extract_numbers(answer)
+
+    # 数字一致性
+    if std_nums:
+        if not ans_nums:
+            scores["groundedness"] = max(1, scores["groundedness"] - 1)
+            scores["similarity"] = max(1, scores["similarity"] - 1)
+        elif std_nums[0] != ans_nums[0]:
+            scores["groundedness"] = max(1, scores["groundedness"] - 1)
+            scores["similarity"] = max(1, scores["similarity"] - 1)
+        else:
+            scores["groundedness"] = min(5, scores["groundedness"] + 1)
+            scores["similarity"] = min(5, scores["similarity"] + 1)
+
+    # 冗长惩罚
+    if len(answer) > max(200, len(standard_answer) * 3):
+        scores["coherence"] = max(1, scores["coherence"] - 1)
+        scores["fluency"] = max(1, scores["fluency"] - 1)
+
+    return scores
+
+
 def _format_context(docs: List, max_chars: int = 3000) -> str:
     joined = "\n\n".join(doc.page_content for doc in docs)
     return joined[:max_chars]
@@ -145,6 +175,7 @@ def run_eval() -> Dict:
             scores, judge_raw = _judge_multidim(
                 rag.llm, question, standard_answer, answer
             )
+            scores = _adjust_scores(question, standard_answer, answer, scores)
             if scores.get("groundedness", 0) <= 2:
                 error_stats["low_groundedness"] += 1
             error_stats["scored_cases"] += 1

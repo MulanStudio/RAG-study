@@ -190,6 +190,17 @@ class AnswerGenerator:
     def _verify_answer(self, query: str, answer: str, context: str) -> bool:
         if not self.llm:
             return True
+        prompt = self.prompts.format(
+            "faithfulness_check",
+            query=query,
+            answer=answer,
+            context=context[:3000]
+        )
+        try:
+            verdict = self.llm.invoke(prompt).content.strip().lower()
+            return verdict.startswith("yes")
+        except Exception:
+            return True
 
     def _covers_key_items(self, query: str, answer: str) -> bool:
         """检查答案是否覆盖问题中的关键项（轻量规则）"""
@@ -275,6 +286,55 @@ class AnswerGenerator:
             numbers.append((value, unit))
         return numbers
 
+    def _parse_kv_record(self, text: str) -> Dict[str, str]:
+        """解析 Table Record / Excel Record 为键值对"""
+        record = {}
+        if ":" not in text:
+            return record
+        # 兼容 "Table Record ...: key: val | key2: val2"
+        if "Table Record" in text:
+            parts = text.split(":", 1)[1]
+        else:
+            parts = text
+        for seg in parts.split("|"):
+            seg = seg.strip()
+            if ":" in seg:
+                key, val = seg.split(":", 1)
+                record[key.strip().lower()] = val.strip()
+        return record
+
+    def _match_record(self, query: str, record: Dict[str, str]) -> int:
+        """根据查询匹配记录，返回匹配分数"""
+        from src.member_b_retrieval.text_processing import extract_key_terms
+        terms = extract_key_terms(query)
+        score = 0
+        for term in terms:
+            for k, v in record.items():
+                if term in k or term in v.lower():
+                    score += 1
+        return score
+
+    def _pick_value_by_query(self, query: str, record: Dict[str, str]) -> Optional[str]:
+        """根据问题挑选最可能的字段值"""
+        from src.member_b_retrieval.text_processing import extract_key_terms
+        terms = extract_key_terms(query)
+        if not terms:
+            return None
+        best_key = None
+        best_score = 0
+        for k in record.keys():
+            score = sum(1 for t in terms if t in k)
+            if score > best_score:
+                best_score = score
+                best_key = k
+        if best_key:
+            return record.get(best_key)
+        # fallback: 返回包含数字的字段
+        for k, v in record.items():
+            if any(ch.isdigit() for ch in v):
+                return v
+        return None
+
     def _extract_compare_entities(self, query: str) -> List[str]:
         import re
         q = query.strip()
@@ -296,6 +356,22 @@ class AnswerGenerator:
         q_lower = query.lower()
         compare_keywords = ["compare", "higher", "lower", "greater", "less", "largest", "smallest", "vs", "versus"]
         calc_keywords = ["sum", "total", "difference", "increase", "decrease", "average", "avg"]
+
+        # 直接字段查询（表格/记录类）
+        best_record = None
+        best_score = 0
+        for doc in documents:
+            if "Table Record" in doc.page_content or "Source File" in doc.page_content:
+                record = self._parse_kv_record(doc.page_content)
+                if record:
+                    score = self._match_record(query, record)
+                    if score > best_score:
+                        best_score = score
+                        best_record = record
+        if best_record:
+            value = self._pick_value_by_query(query, best_record)
+            if value:
+                return value
 
         # 比较类
         if any(k in q_lower for k in compare_keywords):
@@ -347,6 +423,18 @@ class AnswerGenerator:
                     return f"{(a + b) / 2}{unit}"
 
         return None
+
+    def _finalize_answer(self, answer: str) -> str:
+        """裁剪为简短直接答案（单行）"""
+        if not answer:
+            return answer
+        ans = answer.strip().replace("\n", " ").strip()
+        # 取第一句
+        import re
+        parts = re.split(r"(?<=[.!?])\s+", ans)
+        if parts:
+            ans = parts[0]
+        return ans
     
     def generate(
         self,
@@ -415,6 +503,8 @@ class AnswerGenerator:
 
         if choice_options:
             answer = self._format_choice_answer(answer, choice_options)
+        else:
+            answer = self._finalize_answer(answer)
 
         if not self._covers_key_items(query, answer):
             debug_info["coverage_guard"] = "extractive_fallback"

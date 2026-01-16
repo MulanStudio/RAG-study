@@ -92,15 +92,17 @@ class RAGRetriever:
         
         for sub_q in sub_queries:
             sub_q = normalize_query(sub_q) or sub_q
+            intent = self._detect_query_intent(sub_q)
             # 2.1 分组向量检索
-            vector_docs = self._grouped_vector_search(sub_q)
+            vector_docs = self._grouped_vector_search(sub_q, intent=intent)
             if vector_docs:
                 all_rankings.append((vector_docs, 1.0, "vector"))
             
             # 2.2 BM25 检索
             bm25_docs = self._bm25_search(sub_q)
             if bm25_docs:
-                all_rankings.append((bm25_docs, 0.8, "bm25"))
+                bm25_weight = 1.1 if intent == "finance" else 0.8
+                all_rankings.append((bm25_docs, bm25_weight, "bm25"))
             
             # 2.3 HyDE 检索（可选）
             if use_hyde and self.hyde_retriever:
@@ -108,7 +110,8 @@ class RAGRetriever:
                     sub_q, k=10, use_hyde=True, combine_with_original=False
                 )
                 if hyde_docs:
-                    all_rankings.append((hyde_docs, 1.2, "hyde"))
+                    hyde_weight = 1.0 if intent in ["finance", "calc"] else 1.2
+                    all_rankings.append((hyde_docs, hyde_weight, "hyde"))
                 debug_info["hyde"] = hyde_debug
         
         if not all_rankings:
@@ -137,17 +140,18 @@ class RAGRetriever:
         
         return final_docs, debug_info
     
-    def _grouped_vector_search(self, query: str) -> List[Document]:
+    def _grouped_vector_search(self, query: str, intent: str = "general") -> List[Document]:
         """分组向量检索"""
         docs = []
         seen = set()
         cfg = self.config.get("retrieval", {})
+        boost = 2 if intent in ["finance", "calc"] else 1
         filters = [
-            {"type": "excel_record", "k": cfg.get("k_excel", 10)},
+            {"type": "excel_record", "k": cfg.get("k_excel", 10) * boost},
             {"type": "contract_clause", "k": cfg.get("k_word", 5)},
             {"type": "image_caption", "k": cfg.get("k_image", 3)},
             {"type": "markdown_section", "k": cfg.get("k_tech", 5)},
-            {"type": "pdf_table_record", "k": cfg.get("k_pdf_table", 5)},
+            {"type": "pdf_table_record", "k": cfg.get("k_pdf_table", 5) * boost},
             {"type": "pdf_text", "k": cfg.get("k_pdf_text", 5)},
             {"type": "ppt_slide", "k": cfg.get("k_ppt", 5)},
             {"type": None, "k": cfg.get("k_general", 5)},  # General
@@ -169,6 +173,16 @@ class RAGRetriever:
                 pass
         
         return docs
+
+    def _detect_query_intent(self, query: str) -> str:
+        q = query.lower()
+        finance_keywords = ["revenue", "ebitda", "margin", "cash flow", "growth", "q1", "q2", "q3", "q4", "usd", "arr"]
+        calc_keywords = ["sum", "total", "difference", "increase", "decrease", "average", "avg", "compare", "higher", "lower"]
+        if any(k in q for k in finance_keywords):
+            return "finance"
+        if any(k in q for k in calc_keywords):
+            return "calc"
+        return "general"
 
     def _ensure_type_coverage(self, query: str, docs: List[Document]) -> List[Document]:
         """为指定类型提供检索保底，提升多模态覆盖率"""
