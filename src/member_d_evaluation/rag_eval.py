@@ -78,20 +78,33 @@ def _is_refusal(answer: str) -> bool:
     return any(pat in lower for pat in REFUSAL_PATTERNS)
 
 
-def _judge_with_standard(llm, question: str, standard_answer: str, answer: str) -> Tuple[int, str]:
-    prompt = f"""You are evaluating answer correctness (1-5).
-Scoring must use ONLY the question, the standard answer, and the submitted answer.
+def _judge_multidim(llm, question: str, standard_answer: str, answer: str) -> Tuple[Dict[str, int], str]:
+    prompt = f"""Score the submitted answer on five aspects (1-5), using ONLY the question, standard answer, and submitted answer.
+
+Aspects:
+1. Groundedness: whether the submitted answer matches the standard answer.
+2. Relevance: whether the answer addresses the question.
+3. Coherence: logical structure and consistency.
+4. Fluency: grammatical correctness and readability.
+5. Similarity: semantic similarity to the standard answer.
 
 Question: {question}
 Standard Answer: {standard_answer}
 Submitted Answer: {answer}
 
-Score 1 (incorrect) to 5 (fully correct).
-Output:
-Score: <1-5>
+Output format:
+Groundedness: <1-5>
+Relevance: <1-5>
+Coherence: <1-5>
+Fluency: <1-5>
+Similarity: <1-5>
 Reason: <short reason>"""
     response = llm.invoke(prompt).content
-    return _parse_score(response), response
+    scores = {}
+    for key in ["Groundedness", "Relevance", "Coherence", "Fluency", "Similarity"]:
+        match = re.search(rf"{key}:\s*([0-5])", response, re.IGNORECASE)
+        scores[key.lower()] = int(match.group(1)) if match else 0
+    return scores, response
 
 
 def _format_context(docs: List, max_chars: int = 3000) -> str:
@@ -109,7 +122,7 @@ def run_eval() -> Dict:
     results = []
     error_stats = {
         "missing_standard": 0,
-        "low_correctness": 0,
+        "low_groundedness": 0,
         "scored_cases": 0
     }
 
@@ -121,16 +134,22 @@ def run_eval() -> Dict:
         standard_answer = case.get("standard_answer")
         if not standard_answer:
             error_stats["missing_standard"] += 1
-            correctness_score, judge_raw = 0, "Missing standard_answer for this case."
+            scores, judge_raw = {
+                "groundedness": 0,
+                "relevance": 0,
+                "coherence": 0,
+                "fluency": 0,
+                "similarity": 0
+            }, "Missing standard_answer for this case."
         else:
-            correctness_score, judge_raw = _judge_with_standard(
+            scores, judge_raw = _judge_multidim(
                 rag.llm, question, standard_answer, answer
             )
-            if correctness_score <= 2:
-                error_stats["low_correctness"] += 1
+            if scores.get("groundedness", 0) <= 2:
+                error_stats["low_groundedness"] += 1
             error_stats["scored_cases"] += 1
 
-        overall = correctness_score
+        overall = round(sum(scores.values()) / 5, 2)
 
         results.append({
             "id": case["id"],
@@ -139,10 +158,15 @@ def run_eval() -> Dict:
             "standard_answer": standard_answer,
             "answer": answer,
             "scores": {
-                "answer_correctness": overall
+                "groundedness": scores["groundedness"],
+                "relevance": scores["relevance"],
+                "coherence": scores["coherence"],
+                "fluency": scores["fluency"],
+                "similarity": scores["similarity"],
+                "overall": overall
             },
             "judge_raw": {
-                "answer_correctness": judge_raw
+                "multidim": judge_raw
             },
             "retrieval_debug": retrieval_debug,
             "generation_debug": gen_debug
@@ -167,8 +191,8 @@ def main():
         json.dump(report, f, ensure_ascii=False, indent=2)
 
     # 简要汇总输出
-    scores = [r["scores"]["answer_correctness"] for r in report["results"]]
-    scored_scores = [r["scores"]["answer_correctness"] for r in report["results"] if r["standard_answer"]]
+    scores = [r["scores"]["overall"] for r in report["results"]]
+    scored_scores = [r["scores"]["overall"] for r in report["results"] if r["standard_answer"]]
     avg_score = round(sum(scored_scores) / len(scored_scores), 2) if scored_scores else 0
     print("=" * 60)
     print("RAG Evaluation Complete")
