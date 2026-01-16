@@ -15,6 +15,7 @@
 | `.csv` | CSV 数据 | 每行转为独立记录 |
 | `.docx` | Word 文档 | 保留章节结构 |
 | `.md` | Markdown | 按标题切分 |
+| `.pptx` | PowerPoint | 按幻灯片提取文本 |
 | `.png` / `.jpg` | 图片 | VLM 生成描述 |
 
 ## 目录结构示例
@@ -26,6 +27,7 @@ data/
 ├── 设备参数.csv
 ├── 服务合同.docx
 ├── 技术手册.md
+├── 会议分享.pptx
 ├── 设备图片/
 │   ├── rig_spec.png
 │   └── safety_alert.jpg

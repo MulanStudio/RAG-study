@@ -189,7 +189,8 @@ def create_rrf_enhanced_retrieve(
     
     # 检索器 2: BM25 关键词检索
     def bm25_retrieve(query: str) -> List:
-        tokenized = query.split(" ")
+        from src.text_processing import tokenize_text
+        tokenized = tokenize_text(query)
         return bm25.get_top_n(tokenized, splits, n=15)
     
     rrf.add_retriever(

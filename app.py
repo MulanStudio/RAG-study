@@ -34,8 +34,8 @@ def load_config(config_path: str = "config/config.yaml") -> Dict:
         "data": {"root_dir": "data/"},
         "models": {
             "llm": {"model_name": "qwen2.5:3b", "base_url": "http://127.0.0.1:11434"},
-            "embedding": {"model_name": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"},
-            "reranker": {"model_name": "BAAI/bge-reranker-base"}
+            "embedding": {"model_name": "sentence-transformers/all-MiniLM-L6-v2"},
+            "reranker": {"model_name": "cross-encoder/ms-marco-MiniLM-L-6-v2"}
         },
         "indexing": {
             "chunk_size_parent": 2000,
@@ -235,8 +235,9 @@ class OilfieldRAG:
     def _build_bm25(self, docs: List):
         """构建 BM25 索引"""
         from rank_bm25 import BM25Okapi
+        from src.text_processing import tokenize_text
         
-        tokenized = [doc.page_content.split(" ") for doc in docs]
+        tokenized = [tokenize_text(doc.page_content) for doc in docs]
         return BM25Okapi(tokenized)
     
     def _load_reranker(self):

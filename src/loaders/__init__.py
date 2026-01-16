@@ -8,6 +8,7 @@
 - Excel/CSV
 - Word
 - Markdown
+- PPTX
 - 图片（VLM 描述）
 """
 
@@ -184,6 +185,72 @@ def load_pdf_files(directory: str) -> List[Document]:
     return documents
 
 
+def load_ppt_files(directory: str) -> List[Document]:
+    """
+    加载 PPTX 文件，按幻灯片提取文本
+    """
+    documents = []
+    try:
+        from pptx import Presentation
+    except ImportError:
+        print("⚠️ python-pptx 未安装，跳过 PPTX 加载")
+        return documents
+
+    ppt_files = glob.glob(os.path.join(directory, "**/*.pptx"), recursive=True)
+
+    for file_path in ppt_files:
+        try:
+            prs = Presentation(file_path)
+            slide_docs = 0
+
+            for idx, slide in enumerate(prs.slides, start=1):
+                text_parts = []
+                title = None
+
+                if slide.shapes.title and slide.shapes.title.text:
+                    title = slide.shapes.title.text.strip()
+
+                for shape in slide.shapes:
+                    if getattr(shape, "has_text_frame", False) and shape.text:
+                        text = shape.text.strip()
+                        if text:
+                            text_parts.append(text)
+
+                    if getattr(shape, "has_table", False):
+                        table_rows = []
+                        for row in shape.table.rows:
+                            row_text = [cell.text.strip() for cell in row.cells if cell.text]
+                            if row_text:
+                                table_rows.append(" | ".join(row_text))
+                        if table_rows:
+                            text_parts.append("Table: " + " || ".join(table_rows))
+
+                if not text_parts and not title:
+                    continue
+
+                content = "\n".join(text_parts) if text_parts else ""
+                if title:
+                    content = f"Slide Title: {title}\n{content}".strip()
+
+                doc = Document(
+                    page_content=f"PPT Slide {idx}:\n{content}".strip(),
+                    metadata={
+                        "source": file_path,
+                        "type": "ppt_slide",
+                        "slide_index": idx,
+                        "slide_title": title or ""
+                    }
+                )
+                documents.append(doc)
+                slide_docs += 1
+
+            print(f"✅ PPTX: {os.path.basename(file_path)} ({slide_docs} slides)")
+        except Exception as e:
+            print(f"⚠️ PPTX 加载失败 {file_path}: {e}")
+
+    return documents
+
+
 def load_images(directory: str, vlm=None) -> List[Document]:
     """
     加载图片，使用 VLM 生成描述
@@ -272,7 +339,11 @@ def load_all_documents(
     pdf_docs = load_pdf_files(data_dir)
     all_docs.extend(pdf_docs)
     
-    # 5. Images
+    # 5. PPTX
+    ppt_docs = load_ppt_files(data_dir)
+    all_docs.extend(ppt_docs)
+    
+    # 6. Images
     image_docs = load_images(data_dir, vlm=vlm)
     all_docs.extend(image_docs)
     
@@ -283,6 +354,7 @@ def load_all_documents(
         print(f"   - Word: {len(word_docs)}")
         print(f"   - Markdown: {len(md_docs)}")
         print(f"   - PDF: {len(pdf_docs)}")
+        print(f"   - PPTX: {len(ppt_docs)}")
         print(f"   - Images: {len(image_docs)}")
         print("=" * 60)
     

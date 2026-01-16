@@ -12,7 +12,7 @@ data:
   
   # 支持的文件类型
   supported_formats:
-    documents: ["pdf", "docx", "xlsx", "csv", "md"]
+    documents: ["pdf", "docx", "xlsx", "csv", "md", "pptx"]
     images: ["png", "jpg", "jpeg"]
     videos: ["mp4"]  # 暂不支持
 
@@ -35,11 +35,13 @@ models:
   
   # Embedding 模型
   embedding:
-    model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    # 英文语料优先（更适合英文语义检索）
+    model_name: "sentence-transformers/all-MiniLM-L6-v2"
   
   # Reranker 模型
   reranker:
-    model_name: "BAAI/bge-reranker-base"
+    # 英文语料优先（轻量级 Cross-Encoder）
+    model_name: "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 # -----------------------------------------------------
 # 📑 文档处理配置
@@ -102,7 +104,9 @@ prompts:
     CRITICAL INSTRUCTIONS:
     1. Answer in the SAME LANGUAGE as the question (中文问题用中文回答).
     2. If the Context contains specific numbers or data, cite them exactly.
-    3. If you cannot find the answer in the Context, say "根据提供的资料，我无法找到相关信息。"
+    3. If you cannot find the answer in the Context, respond in the same language:
+       - English: "I cannot find this information in the provided materials."
+       - 中文: "根据提供的资料，我无法找到相关信息。"
     4. Keep your answer concise but complete.
     
     Context:

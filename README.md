@@ -15,6 +15,7 @@ data/
 ├── *.csv          # CSV 数据
 ├── *.docx         # Word 文档
 ├── *.md           # Markdown 文档
+├── *.pptx         # PowerPoint
 ├── *.png / *.jpg  # 图片（VLM 自动生成描述）
 └── subfolders/    # 支持子文件夹
 ```

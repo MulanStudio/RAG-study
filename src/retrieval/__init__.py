@@ -161,7 +161,8 @@ class RAGRetriever:
     
     def _bm25_search(self, query: str, n: int = 15) -> List[Document]:
         """BM25 关键词检索"""
-        tokenized = query.split(" ")
+        from src.text_processing import tokenize_text
+        tokenized = tokenize_text(query)
         return self.bm25.get_top_n(tokenized, self.splits, n=n)
     
     def _restore_parents(self, child_docs: List[Document]) -> List[Document]:

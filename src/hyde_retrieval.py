@@ -249,7 +249,8 @@ def create_hyde_enhanced_retriever(
         )
         
         # BM25 补充
-        tokenized_query = query.split(" ")
+        from src.text_processing import tokenize_text
+        tokenized_query = tokenize_text(query)
         from rank_bm25 import BM25Okapi
         bm25_docs = bm25.get_top_n(tokenized_query, splits, n=k)
         
