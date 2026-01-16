@@ -28,7 +28,6 @@ _STOPWORDS = {
     "的", "是", "什么", "哪些", "比较", "与"
 }
 
-_MATH_PATTERN = re.compile(r"^\s*([\d\.\s]+)([+\-*/])([\d\.\s]+)\s*$")
 
 
 def tokenize_text(text: str) -> List[str]:
@@ -58,37 +57,4 @@ def extract_key_terms(text: str) -> List[str]:
     return [t for t in tokens if t not in _STOPWORDS and len(t) > 2]
 
 
-def is_commonsense_math(text: str) -> bool:
-    """检测是否为基础算数表达式（如 1+1）"""
-    if not text:
-        return False
-    return _MATH_PATTERN.match(text.strip()) is not None
-
-
-def solve_commonsense_math(text: str) -> str:
-    """计算基础算数表达式结果（仅支持 + - * /）"""
-    match = _MATH_PATTERN.match(text.strip())
-    if not match:
-        return ""
-    left, op, right = match.group(1).strip(), match.group(2), match.group(3).strip()
-    try:
-        a = float(left)
-        b = float(right)
-    except ValueError:
-        return ""
-
-    if op == "+":
-        result = a + b
-    elif op == "-":
-        result = a - b
-    elif op == "*":
-        result = a * b
-    else:
-        if b == 0:
-            return ""
-        result = a / b
-
-    if result.is_integer():
-        return str(int(result))
-    return str(result)
 

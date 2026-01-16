@@ -94,22 +94,6 @@ Reason: <short reason>"""
     return _parse_score(response), response
 
 
-def _is_commonsense_math(question: str) -> bool:
-    try:
-        from src.member_b_retrieval.text_processing import is_commonsense_math
-        return is_commonsense_math(question)
-    except Exception:
-        return False
-
-
-def _solve_commonsense_math(question: str) -> str:
-    try:
-        from src.member_b_retrieval.text_processing import solve_commonsense_math
-        return solve_commonsense_math(question)
-    except Exception:
-        return ""
-
-
 def _format_context(docs: List, max_chars: int = 3000) -> str:
     joined = "\n\n".join(doc.page_content for doc in docs)
     return joined[:max_chars]
@@ -135,13 +119,7 @@ def run_eval() -> Dict:
         answer, gen_debug = rag.generator.generate(question, docs)
 
         standard_answer = case.get("standard_answer")
-        if _is_commonsense_math(question):
-            expected = _solve_commonsense_math(question)
-            if expected and answer.strip() == expected:
-                correctness_score, judge_raw = 5, "Math commonsense: exact match."
-            else:
-                correctness_score, judge_raw = 1, "Math commonsense: mismatch."
-        elif not standard_answer:
+        if not standard_answer:
             error_stats["missing_standard"] += 1
             correctness_score, judge_raw = 0, "Missing standard_answer for this case."
         else:

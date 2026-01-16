@@ -241,6 +241,9 @@ brew install tesseract
 python3 -m pip install pytesseract
 ```
 
+**Q: 常识计算题支持？**
+不支持。仅回答材料内可检索到的计算结果。
+
 **Q: 检索效果不好**
 - 检查 `config/config.yaml` 中的召回参数
 - 尝试调整 `rrf.weights` 中的权重

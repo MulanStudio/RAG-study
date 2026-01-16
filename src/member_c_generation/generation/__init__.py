@@ -263,17 +263,90 @@ class AnswerGenerator:
             if text.lower() in answer_clean.lower():
                 return f"{letter}. {text}"
         return answer
-        prompt = self.prompts.format(
-            "faithfulness_check",
-            query=query,
-            answer=answer,
-            context=context[:3000]
-        )
-        try:
-            verdict = self.llm.invoke(prompt).content.strip().lower()
-            return verdict.startswith("yes")
-        except Exception:
-            return True
+    
+    def _extract_numbers(self, text: str) -> List[Tuple[float, str]]:
+        """抽取数值及其单位（简化版）"""
+        import re
+        numbers = []
+        pattern = re.compile(r"(-?\d+(?:\.\d+)?)\s*(%|bps|m\s*usd|usd|bbl|m3)?", re.IGNORECASE)
+        for match in pattern.finditer(text):
+            value = float(match.group(1))
+            unit = (match.group(2) or "").strip().lower()
+            numbers.append((value, unit))
+        return numbers
+
+    def _extract_compare_entities(self, query: str) -> List[str]:
+        import re
+        q = query.strip()
+        q_lower = q.lower()
+        if " vs " in q_lower:
+            parts = re.split(r"\bvs\b", q, flags=re.IGNORECASE)
+            return [p.strip(" .,:;") for p in parts if p.strip()]
+        if " versus " in q_lower:
+            parts = re.split(r"\bversus\b", q, flags=re.IGNORECASE)
+            return [p.strip(" .,:;") for p in parts if p.strip()]
+        m = re.search(r"compare\s+(.+?)\s+(?:and|vs|versus)\s+(.+)", q, flags=re.IGNORECASE)
+        if m:
+            return [m.group(1).strip(" .,:;"), m.group(2).strip(" .,:;")]
+        return []
+
+    def _try_context_calculation(self, query: str, documents: List[Document]) -> Optional[str]:
+        """基于上下文进行计算/比较"""
+        import re
+        q_lower = query.lower()
+        compare_keywords = ["compare", "higher", "lower", "greater", "less", "largest", "smallest", "vs", "versus"]
+        calc_keywords = ["sum", "total", "difference", "increase", "decrease", "average", "avg"]
+
+        # 比较类
+        if any(k in q_lower for k in compare_keywords):
+            entities = self._extract_compare_entities(query)
+            if len(entities) >= 2:
+                ent_a, ent_b = entities[0], entities[1]
+                vals = {}
+                for doc in documents[:6]:
+                    text = doc.page_content.replace("\n", " ")
+                    sentences = re.split(r"(?<=[.!?])\s+", text)
+                    for sent in sentences:
+                        sent_lower = sent.lower()
+                        if ent_a.lower() in sent_lower or ent_b.lower() in sent_lower:
+                            nums = self._extract_numbers(sent)
+                            if nums:
+                                if ent_a.lower() in sent_lower and ent_a not in vals:
+                                    vals[ent_a] = nums[0]
+                                if ent_b.lower() in sent_lower and ent_b not in vals:
+                                    vals[ent_b] = nums[0]
+                        if len(vals) >= 2:
+                            break
+                    if len(vals) >= 2:
+                        break
+                if len(vals) >= 2:
+                    a_val, a_unit = vals[ent_a]
+                    b_val, b_unit = vals[ent_b]
+                    if a_val == b_val:
+                        return f"{ent_a} and {ent_b} are equal ({a_val}{a_unit})."
+                    higher = ent_a if a_val > b_val else ent_b
+                    return f"{ent_a}: {a_val}{a_unit}, {ent_b}: {b_val}{b_unit}. {higher} is higher."
+
+        # 计算类
+        if any(k in q_lower for k in calc_keywords):
+            numbers = []
+            for doc in documents[:6]:
+                text = doc.page_content.replace("\n", " ")
+                numbers.extend(self._extract_numbers(text))
+            if len(numbers) >= 2:
+                a, unit_a = numbers[0]
+                b, unit_b = numbers[1]
+                unit = unit_a if unit_a == unit_b else unit_a or unit_b
+                if "sum" in q_lower or "total" in q_lower:
+                    return f"{a + b}{unit}"
+                if "difference" in q_lower or "decrease" in q_lower:
+                    return f"{abs(a - b)}{unit}"
+                if "increase" in q_lower:
+                    return f"{a - b}{unit}"
+                if "average" in q_lower or "avg" in q_lower:
+                    return f"{(a + b) / 2}{unit}"
+
+        return None
     
     def generate(
         self,
@@ -293,13 +366,6 @@ class AnswerGenerator:
             (answer, debug_info)
         """
         debug_info = {}
-        from src.member_b_retrieval.text_processing import is_commonsense_math, solve_commonsense_math
-
-        if is_commonsense_math(query):
-            answer = solve_commonsense_math(query)
-            if answer:
-                debug_info["commonsense_math"] = "answered"
-                return answer, debug_info
         
         if not self.llm:
             return "LLM 不可用", debug_info
@@ -322,6 +388,12 @@ class AnswerGenerator:
                 debug_info["crag_status"] = "passed"
                 final_docs = filtered_docs if filtered_docs else documents
         
+        # 尝试材料内计算/比较
+        calc_answer = self._try_context_calculation(query, final_docs)
+        if calc_answer:
+            debug_info["context_calc"] = "answered"
+            return calc_answer, debug_info
+
         # 构建上下文
         context = "\n\n".join([doc.page_content for doc in final_docs])
 
