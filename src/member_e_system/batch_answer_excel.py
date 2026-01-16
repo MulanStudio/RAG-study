@@ -13,7 +13,7 @@ import os
 import pandas as pd
 import yaml
 
-from app import OilfieldRAG
+from src.member_e_system.app import OilfieldRAG
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:

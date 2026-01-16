@@ -193,7 +193,7 @@ class AnswerGenerator:
 
     def _covers_key_items(self, query: str, answer: str) -> bool:
         """检查答案是否覆盖问题中的关键项（轻量规则）"""
-        from src.text_processing import tokenize_text, normalize_query, extract_key_terms
+        from src.member_b_retrieval.text_processing import tokenize_text, normalize_query, extract_key_terms
         a_norm = normalize_query(answer)
         a_tokens = set(tokenize_text(a_norm))
         key_terms = extract_key_terms(query)
@@ -206,7 +206,7 @@ class AnswerGenerator:
 
     def _extractive_fallback(self, query: str, documents: List[Document]) -> str:
         """从上下文中抽取与问题最相关的片段作为答案"""
-        from src.text_processing import extract_key_terms
+        from src.member_b_retrieval.text_processing import extract_key_terms
         import re
 
         if not documents:
@@ -293,7 +293,7 @@ class AnswerGenerator:
             (answer, debug_info)
         """
         debug_info = {}
-        from src.text_processing import is_commonsense_math, solve_commonsense_math
+        from src.member_b_retrieval.text_processing import is_commonsense_math, solve_commonsense_math
 
         if is_commonsense_math(query):
             answer = solve_commonsense_math(query)

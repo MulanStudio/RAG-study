@@ -36,13 +36,9 @@
 
 ### 负责模块
 ```
-src/loaders/
-├── pdf_loader.py      # PDF 表格提取
-├── excel_loader.py    # Excel/CSV 加载
-├── word_loader.py     # Word 结构化加载
-├── image_loader.py    # 图片 VLM 处理
-├── markdown_loader.py # Markdown 加载
-└── video_loader.py    # 视频处理（如果需要）
+src/member_a_data/
+├── loaders/                # 多模态数据加载 (PDF/Excel/Word/MD/PPT/Images)
+└── pdf_table_extractor.py
 ```
 
 ### 核心任务
@@ -69,13 +65,12 @@ docs = load_all_documents("data/")  # 返回 List[Document]
 
 ### 负责模块
 ```
-src/retrieval/
-├── vector_search.py       # 向量检索
-├── bm25_search.py         # BM25 关键词检索
-├── hyde.py                # HyDE 假设文档检索
-├── query_decomposition.py # 问题分解
-├── rrf_fusion.py          # RRF 多路融合
-└── reranker.py            # 重排序
+src/member_b_retrieval/
+├── retrieval/
+├── rrf_fusion.py
+├── hyde_retrieval.py
+├── query_decomposition.py
+└── text_processing.py
 ```
 
 ### 核心任务
@@ -102,11 +97,8 @@ docs = retrieve_documents(query, top_k=5)  # 返回最相关的文档
 
 ### 负责模块
 ```
-src/generation/
-├── prompts.py         # Prompt 模板管理
-├── crag.py            # 自我修正 RAG
-├── answer_verify.py   # 答案验证
-└── citation.py        # 来源引用
+src/member_c_generation/
+└── generation/             # Prompt/CRAG/回答格式与选择题规范
 ```
 
 ### 核心任务
@@ -149,11 +141,9 @@ generation:
 
 ### 负责模块
 ```
-src/evaluation/
-├── benchmark.py       # 评测框架
-├── metrics.py         # 评测指标
-├── test_cases.py      # 测试用例管理
-└── analysis.py        # 结果分析
+src/member_d_evaluation/
+├── rag_eval.py             # 问题+标准答案+提交答案评分
+└── benchmark_challenge.py  # 历史评测脚本
 ```
 
 ### 核心任务
@@ -190,13 +180,12 @@ python benchmark.py --config config/config.yaml
 
 ### 负责模块
 ```
-├── app.py             # 主应用入口
-├── config/
-│   └── config.yaml    # 统一配置
-├── scripts/
-│   ├── setup.sh       # 环境安装
-│   └── run.sh         # 一键运行
-└── README.md          # 使用文档
+src/member_e_system/
+├── app.py                   # 主应用入口
+├── batch_answer_excel.py    # Excel 批量问答
+└── azure_openai_client.py   # Azure OpenAI 适配
+config/config.yaml           # 统一配置
+README.md                    # 使用文档
 ```
 
 ### 核心任务

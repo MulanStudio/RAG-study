@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from typing import Dict, List, Tuple
 
-from app import OilfieldRAG
+from src.member_e_system.app import OilfieldRAG
 
 
 EVAL_CASES = [
@@ -96,7 +96,7 @@ Reason: <short reason>"""
 
 def _is_commonsense_math(question: str) -> bool:
     try:
-        from src.text_processing import is_commonsense_math
+        from src.member_b_retrieval.text_processing import is_commonsense_math
         return is_commonsense_math(question)
     except Exception:
         return False
@@ -104,7 +104,7 @@ def _is_commonsense_math(question: str) -> bool:
 
 def _solve_commonsense_math(question: str) -> str:
     try:
-        from src.text_processing import solve_commonsense_math
+        from src.member_b_retrieval.text_processing import solve_commonsense_math
         return solve_commonsense_math(question)
     except Exception:
         return ""

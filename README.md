@@ -34,30 +34,24 @@ brew install tesseract
 python3 -m pip install pytesseract
 ```
 
-### 3. 启动 Ollama
+### 3. 配置模型（Azure OpenAI）
 
 ```bash
-# 终端 1: 启动 Ollama 服务
-ollama serve
-
-# 终端 2: 下载模型
-ollama pull qwen2.5:3b
-ollama pull llava  # 可选，用于图片理解
+# .env 示例
+TEAM_DOMAIN=your-team-name
+AZURE_OPENAI_API_KEY=your-key
+AZURE_OPENAI_MODEL=gpt-5-chat
+AZURE_OPENAI_EMBEDDING_MODEL=text-embedding-3-large
 ```
 
 ### 4. 运行系统
 
 ```bash
 # 方式 1: 命令行交互
-python app.py
+python src/member_e_system/app.py
 
-# 方式 2: Web UI
-python app.py --mode web
-# 或
-streamlit run streamlit_app.py
-
-# 方式 3: 直接提问
-python app.py --question "SLB 的 2023 年营收是多少？"
+# 方式 2: 直接提问
+python src/member_e_system/app.py --question "SLB 的 2023 年营收是多少？"
 ```
 
 ### 5. 批量回答 Excel
@@ -65,7 +59,7 @@ python app.py --question "SLB 的 2023 年营收是多少？"
 比赛题目 Excel（列：no./question/answer）可直接回写答案：
 
 ```bash
-python3 batch_answer_excel.py --input data/questions.xlsx
+python3 src/member_e_system/batch_answer_excel.py --input data/questions.xlsx
 ```
 
 默认配置在 `config/config.yaml` 的 `batch_answer`，支持断点续跑与定期保存。
@@ -82,15 +76,16 @@ RAG-study/
 ├── config/
 │   └── config.yaml          # 统一配置文件
 ├── src/
-│   ├── loaders/             # 数据加载模块
-│   ├── retrieval/           # 检索模块
-│   ├── generation/          # 生成模块
-│   └── evaluation/          # 评测模块
-├── app.py                   # 主应用入口
-├── streamlit_app.py         # Web UI
-├── benchmark_challenge.py   # 评测脚本
-├── rag_eval.py              # RAG 评测脚本 (LLM-as-a-judge)
-├── batch_answer_excel.py    # 批量回答 Excel
+│   ├── member_a_data/       # 成员A 工作区
+│   ├── member_b_retrieval/  # 成员B 工作区
+│   ├── member_c_generation/ # 成员C 工作区
+│   ├── member_d_evaluation/ # 成员D 工作区
+│   └── member_e_system/     # 成员E 工作区
+├── src/member_e_system/app.py        # 主应用入口
+ 
+├── src/member_d_evaluation/benchmark_challenge.py  # 历史评测
+├── src/member_d_evaluation/rag_eval.py             # 评测入口
+├── src/member_e_system/batch_answer_excel.py       # 批量回答 Excel
 ├── requirements.txt         # 依赖清单
 ├── TEAM_GUIDE.md           # 团队分工指南
 └── README.md
@@ -103,12 +98,14 @@ RAG-study/
 编辑 `config/config.yaml` 来调整系统行为：
 
 ```yaml
-# 模型配置
+# 模型配置（Azure OpenAI）
 models:
   llm:
-    model_name: "qwen2.5:3b"  # 可以换成其他模型
+    provider: "azure_openai"
+    model_name: "gpt-5-chat"
   embedding:
-    model_name: "sentence-transformers/all-MiniLM-L6-v2"
+    provider: "azure_openai"
+    model_name: "text-embedding-3-large"
 
 # 检索配置
 retrieval:
@@ -123,6 +120,15 @@ batch_answer:
   answer_col: "answer"
   resume: true
   save_every: 5
+
+# Azure OpenAI 配置
+models:
+  azure_openai:
+    team_domain: "your-team-name"
+    api_key_env: "AZURE_OPENAI_API_KEY"
+    completion_model: "gpt-5-chat"
+    completion_model_fallback: "gpt-5-mini"
+    embedding_model: "text-embedding-3-large"
 
 # Prompt 配置（可自定义）
 prompts:
@@ -209,8 +215,8 @@ prompts:
 # 运行评测（旧）
 python benchmark_challenge.py
 
-# 运行评测（通用 LLM-as-a-judge）
-python rag_eval.py
+# 运行评测（问题+标准答案+提交答案）
+python src/member_d_evaluation/rag_eval.py
 
 # 输出示例
 🧪 Testing: 比较类问题
@@ -222,12 +228,6 @@ python rag_eval.py
 ---
 
 ## 🐛 常见问题
-
-**Q: Ollama 连接失败**
-```bash
-# 确保 Ollama 正在运行
-ollama serve
-```
 
 **Q: 图片没有描述**
 ```bash

@@ -24,8 +24,9 @@ from typing import List, Dict
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 
 # 添加路径
-sys.path.insert(0, os.path.dirname(__file__))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, project_root)
+sys.path.insert(0, os.path.join(project_root, "src"))
 
 
 def load_config(config_path: str = "config/config.yaml") -> Dict:
@@ -94,7 +95,7 @@ class OilfieldRAG:
         
         # 1. 加载数据
         print("\n📂 Step 1: 加载数据...")
-        from src.loaders import load_all_documents
+        from src.member_a_data.loaders import load_all_documents
         
         # 检查 VLM
         vlm = self._init_vlm()
@@ -128,8 +129,8 @@ class OilfieldRAG:
         
         # 7. 初始化检索器和生成器
         print("\n⚙️ Step 7: 初始化检索器和生成器...")
-        from src.retrieval import RAGRetriever
-        from src.generation import create_generator
+        from src.member_b_retrieval.retrieval import RAGRetriever
+        from src.member_c_generation.generation import create_generator
         
         self.retriever = RAGRetriever(
             vectorstore=self.vectorstore,
@@ -229,7 +230,11 @@ class OilfieldRAG:
         provider = emb_cfg.get("provider", "huggingface")
         
         if provider == "azure_openai":
-            from src.azure_openai_client import create_azure_openai_client, AzureOpenAIEmbeddings, load_azure_settings
+            from src.member_e_system.azure_openai_client import (
+                create_azure_openai_client,
+                AzureOpenAIEmbeddings,
+                load_azure_settings,
+            )
             azure_cfg = load_azure_settings(self.config)
             client = create_azure_openai_client(
                 azure_cfg["team_domain"],
@@ -246,7 +251,7 @@ class OilfieldRAG:
     def _build_bm25(self, docs: List):
         """构建 BM25 索引"""
         from rank_bm25 import BM25Okapi
-        from src.text_processing import tokenize_text
+        from src.member_b_retrieval.text_processing import tokenize_text
         
         tokenized = [tokenize_text(doc.page_content) for doc in docs]
         return BM25Okapi(tokenized)
@@ -264,7 +269,7 @@ class OilfieldRAG:
             cfg = self.config["models"]["llm"]
             provider = cfg.get("provider", "ollama")
             if provider == "azure_openai":
-                from src.azure_openai_client import create_azure_openai_client, AzureOpenAIChat, load_azure_settings
+                from src.member_e_system.azure_openai_client import create_azure_openai_client, AzureOpenAIChat, load_azure_settings
                 azure_cfg = load_azure_settings(self.config)
                 client = create_azure_openai_client(
                     azure_cfg["team_domain"],

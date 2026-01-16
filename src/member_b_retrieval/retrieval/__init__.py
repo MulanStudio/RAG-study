@@ -17,10 +17,11 @@ from typing import List, Dict, Tuple, Optional
 from langchain_core.documents import Document
 
 # 复用已有模块
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from src.query_decomposition import QueryDecomposer
-from src.hyde_retrieval import HyDERetriever
-from src.rrf_fusion import rrf_fuse
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+sys.path.insert(0, project_root)
+from src.member_b_retrieval.query_decomposition import QueryDecomposer
+from src.member_b_retrieval.hyde_retrieval import HyDERetriever
+from src.member_b_retrieval.rrf_fusion import rrf_fuse
 
 
 class RAGRetriever:
@@ -73,7 +74,7 @@ class RAGRetriever:
         Returns:
             (documents, debug_info)
         """
-        from src.text_processing import normalize_query
+        from src.member_b_retrieval.text_processing import normalize_query
         debug_info = {"original_query": query}
         normalized_query = normalize_query(query)
         debug_info["normalized_query"] = normalized_query
@@ -209,7 +210,7 @@ class RAGRetriever:
     
     def _bm25_search(self, query: str, n: int = 15) -> List[Document]:
         """BM25 关键词检索"""
-        from src.text_processing import tokenize_text
+        from src.member_b_retrieval.text_processing import tokenize_text
         tokenized = tokenize_text(query)
         return self.bm25.get_top_n(tokenized, self.splits, n=n)
     
@@ -237,7 +238,7 @@ class RAGRetriever:
         top_k: int
     ) -> List[Document]:
         """Reranker 精排"""
-        from src.text_processing import extract_key_terms, tokenize_text, normalize_query
+        from src.member_b_retrieval.text_processing import extract_key_terms, tokenize_text, normalize_query
         pairs = [[query, doc.page_content] for doc in docs]
         scores = self.reranker.predict(pairs)
         

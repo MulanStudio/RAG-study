@@ -20,8 +20,9 @@ from langchain_core.documents import Document
 
 # 复用已有模块
 import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from src.pdf_table_extractor import PDFTableExtractor
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+sys.path.insert(0, project_root)
+from src.member_a_data.pdf_table_extractor import PDFTableExtractor
 
 
 def load_excel_files(directory: str) -> List[Document]:

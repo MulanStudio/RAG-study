@@ -19,8 +19,9 @@ from langchain_ollama import ChatOllama
 from docx import Document as DocxDocument
 
 # 添加 src 目录到路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
-from hyde_retrieval import HyDERetriever
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, os.path.join(project_root, "src"))
+from src.member_b_retrieval.hyde_retrieval import HyDERetriever
 
 # 设置环境变量
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
