@@ -33,8 +33,8 @@ def load_config(config_path: str = "config/config.yaml") -> Dict:
     default_config = {
         "data": {"root_dir": "data/"},
         "models": {
-            "llm": {"model_name": "qwen2.5:3b", "base_url": "http://127.0.0.1:11434"},
-            "embedding": {"model_name": "sentence-transformers/all-MiniLM-L6-v2"},
+            "llm": {"provider": "azure_openai", "model_name": "gpt-5-chat", "base_url": ""},
+            "embedding": {"provider": "azure_openai", "model_name": "text-embedding-3-large"},
             "reranker": {"model_name": "cross-encoder/ms-marco-MiniLM-L-6-v2"}
         },
         "indexing": {
@@ -224,11 +224,22 @@ class OilfieldRAG:
     
     def _build_vectorstore(self, docs: List):
         """构建向量数据库"""
-        from langchain_huggingface import HuggingFaceEmbeddings
         from langchain_chroma import Chroma
+        emb_cfg = self.config["models"]["embedding"]
+        provider = emb_cfg.get("provider", "huggingface")
         
-        model_name = self.config["models"]["embedding"]["model_name"]
-        embeddings = HuggingFaceEmbeddings(model_name=model_name)
+        if provider == "azure_openai":
+            from src.azure_openai_client import create_azure_openai_client, AzureOpenAIEmbeddings, load_azure_settings
+            azure_cfg = load_azure_settings(self.config)
+            client = create_azure_openai_client(
+                azure_cfg["team_domain"],
+                azure_cfg["api_key"]
+            )
+            embeddings = AzureOpenAIEmbeddings(client, azure_cfg["embedding_model"])
+        else:
+            from langchain_huggingface import HuggingFaceEmbeddings
+            model_name = emb_cfg["model_name"]
+            embeddings = HuggingFaceEmbeddings(model_name=model_name)
         
         return Chroma.from_documents(documents=docs, embedding=embeddings)
     
@@ -250,16 +261,29 @@ class OilfieldRAG:
     def _init_llm(self):
         """初始化 LLM"""
         try:
-            from langchain_ollama import ChatOllama
-            
             cfg = self.config["models"]["llm"]
-            llm = ChatOllama(
-                model=cfg["model_name"],
-                base_url=cfg["base_url"]
-            )
-            llm.invoke("hi")  # 测试连接
-            print(f"   ✅ LLM 连接成功: {cfg['model_name']}")
-            return llm
+            provider = cfg.get("provider", "ollama")
+            if provider == "azure_openai":
+                from src.azure_openai_client import create_azure_openai_client, AzureOpenAIChat, load_azure_settings
+                azure_cfg = load_azure_settings(self.config)
+                client = create_azure_openai_client(
+                    azure_cfg["team_domain"],
+                    azure_cfg["api_key"]
+                )
+                model = azure_cfg["completion_model"] or cfg["model_name"]
+                llm = AzureOpenAIChat(client, model, temperature=cfg.get("temperature", 0.1))
+                llm.invoke("hi")
+                print(f"   ✅ LLM 连接成功 (Azure): {model}")
+                return llm
+            else:
+                from langchain_ollama import ChatOllama
+                llm = ChatOllama(
+                    model=cfg["model_name"],
+                    base_url=cfg["base_url"]
+                )
+                llm.invoke("hi")  # 测试连接
+                print(f"   ✅ LLM 连接成功: {cfg['model_name']}")
+                return llm
         except Exception as e:
             print(f"   ⚠️ LLM 连接失败: {e}")
             return None

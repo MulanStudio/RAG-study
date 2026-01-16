@@ -22,9 +22,9 @@ data:
 models:
   # LLM 配置 (本地 Ollama)
   llm:
-    provider: "ollama"
-    model_name: "qwen2.5:3b"
-    base_url: "http://127.0.0.1:11434"
+    provider: "azure_openai"
+    model_name: "gpt-5-chat"
+    base_url: ""
     temperature: 0.1  # 低温度 = 更确定性的回答
   
   # VLM 配置 (图片理解)
@@ -35,8 +35,16 @@ models:
   
   # Embedding 模型
   embedding:
-    # 英文语料优先（更适合英文语义检索）
-    model_name: "sentence-transformers/all-MiniLM-L6-v2"
+    provider: "azure_openai"
+    model_name: "text-embedding-3-large"
+
+  # Azure OpenAI 配置
+  azure_openai:
+    team_domain: ""  # 例如: your-team-name
+    api_key_env: "AZURE_OPENAI_API_KEY"
+    completion_model: "gpt-5-chat"
+    completion_model_fallback: "gpt-5-mini"
+    embedding_model: "text-embedding-3-large"
   
   # Reranker 模型
   reranker:
@@ -61,7 +69,10 @@ retrieval:
   k_excel: 10      # Excel/CSV 数据
   k_word: 5        # Word 合同
   k_image: 3       # 图片描述
-  k_tech: 5        # 技术文档
+  k_tech: 5        # 技术文档（Markdown）
+  k_pdf_table: 6   # PDF 表格记录
+  k_pdf_text: 5    # PDF 文本
+  k_ppt: 5         # PPT 幻灯片
   k_general: 5     # 通用
   
   # 财务问题动态加权
@@ -96,23 +107,45 @@ prompts:
     Document: {doc_content}
     Give a binary score 'yes' or 'no'. Output only 'yes' or 'no'.
 
+  # 答案可信性校验 (Guard)
+  faithfulness_check: |
+    You are a strict fact-checker.
+    Question: {query}
+    Answer: {answer}
+    Context: {context}
+    Is the answer fully supported by the context? Answer only 'yes' or 'no'.
+
   # 最终回答生成
   generation: |
     You are a Senior Technical Expert in the Oil & Gas industry.
-    Answer the user's question deeply and accurately based on the Context provided.
+    Answer the user's question directly and accurately based on the Context provided.
     
     CRITICAL INSTRUCTIONS:
     1. Answer in the SAME LANGUAGE as the question (中文问题用中文回答).
-    2. If the Context contains specific numbers or data, cite them exactly.
-    3. If you cannot find the answer in the Context, respond in the same language:
-       - English: "I cannot find this information in the provided materials."
-       - 中文: "根据提供的资料，我无法找到相关信息。"
-    4. Keep your answer concise but complete.
+    2. Do NOT include citations or source-referencing language.
+    3. If you cannot find the answer, respond in the same language:
+       - English: "I don't know."
+       - 中文: "不知道。"
+    4. Keep your answer concise and direct.
     
     Context:
     {context}
     
     User Question: {query}
+    
+    Answer:
+
+  # 选择题回答
+  choice_answer: |
+    You are answering a multiple-choice question.
+    Answer format must be: "<OptionLetter>. <OptionText>".
+    No explanation.
+    
+    Context:
+    {context}
+    
+    Question:
+    {query}
     
     Answer:
 
@@ -141,6 +174,20 @@ evaluation:
   
   # 通过阈值
   pass_threshold: 7    # 满分 10 分，7 分及格
+
+# -----------------------------------------------------
+# 📥 批量问答（Excel）
+# -----------------------------------------------------
+batch_answer:
+  # 输入/输出 Excel 路径（可以在命令行覆盖）
+  input_path: "data/questions.xlsx"
+  output_path: ""  # 留空则覆盖输入文件
+  question_col: "question"
+  answer_col: "answer"
+  start_row: 0
+  limit: null
+  resume: true       # 跳过已有答案的行
+  save_every: 5      # 每处理 N 行保存一次（防中断）
 
 # -----------------------------------------------------
 # 🖥️ 系统配置

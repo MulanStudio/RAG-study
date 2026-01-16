@@ -73,7 +73,10 @@ class RAGRetriever:
         Returns:
             (documents, debug_info)
         """
+        from src.text_processing import normalize_query
         debug_info = {"original_query": query}
+        normalized_query = normalize_query(query)
+        debug_info["normalized_query"] = normalized_query
         
         # Step 1: 问题分解（可选）
         if use_decomposition and self.llm:
@@ -81,12 +84,13 @@ class RAGRetriever:
             sub_queries = decomposition["sub_queries"]
             debug_info["decomposition"] = decomposition
         else:
-            sub_queries = [query]
+            sub_queries = [normalized_query or query]
         
         # Step 2: 对每个子问题检索
         all_rankings = []
         
         for sub_q in sub_queries:
+            sub_q = normalize_query(sub_q) or sub_q
             # 2.1 分组向量检索
             vector_docs = self._grouped_vector_search(sub_q)
             if vector_docs:
@@ -118,10 +122,13 @@ class RAGRetriever:
         
         debug_info["rrf_fusion"] = f"Merged {len(all_rankings)} rankings"
         
-        # Step 4: Parent Document 还原
+        # Step 4: 类型覆盖保底
+        candidate_docs = self._ensure_type_coverage(query, candidate_docs)
+        
+        # Step 5: Parent Document 还原
         parent_docs = self._restore_parents(candidate_docs)
         
-        # Step 5: Reranker 精排
+        # Step 6: Reranker 精排
         if self.reranker and parent_docs:
             final_docs = self._rerank(query, parent_docs, top_k)
         else:
@@ -133,13 +140,16 @@ class RAGRetriever:
         """分组向量检索"""
         docs = []
         seen = set()
-        
+        cfg = self.config.get("retrieval", {})
         filters = [
-            {"type": "excel_record", "k": 10},
-            {"type": "contract_clause", "k": 5},
-            {"type": "image_caption", "k": 3},
-            {"type": "markdown_section", "k": 5},
-            {"type": None, "k": 5},  # General
+            {"type": "excel_record", "k": cfg.get("k_excel", 10)},
+            {"type": "contract_clause", "k": cfg.get("k_word", 5)},
+            {"type": "image_caption", "k": cfg.get("k_image", 3)},
+            {"type": "markdown_section", "k": cfg.get("k_tech", 5)},
+            {"type": "pdf_table_record", "k": cfg.get("k_pdf_table", 5)},
+            {"type": "pdf_text", "k": cfg.get("k_pdf_text", 5)},
+            {"type": "ppt_slide", "k": cfg.get("k_ppt", 5)},
+            {"type": None, "k": cfg.get("k_general", 5)},  # General
         ]
         
         for f in filters:
@@ -156,6 +166,44 @@ class RAGRetriever:
                         seen.add(doc.page_content)
             except:
                 pass
+        
+        return docs
+
+    def _ensure_type_coverage(self, query: str, docs: List[Document]) -> List[Document]:
+        """为指定类型提供检索保底，提升多模态覆盖率"""
+        cfg = self.config.get("retrieval", {})
+        must_types = cfg.get(
+            "must_include_types",
+            ["pdf_table_record", "ppt_slide", "image_caption"]
+        )
+        if not must_types:
+            return docs
+
+        seen = set(doc.page_content for doc in docs)
+        present_types = set(doc.metadata.get("type") for doc in docs if doc.metadata)
+        
+        type_k_map = {
+            "pdf_table_record": cfg.get("k_pdf_table", 6),
+            "pdf_text": cfg.get("k_pdf_text", 5),
+            "ppt_slide": cfg.get("k_ppt", 5),
+            "image_caption": cfg.get("k_image", 3),
+        }
+
+        for doc_type in must_types:
+            if doc_type in present_types:
+                continue
+            try:
+                k = type_k_map.get(doc_type, 3)
+                results = self.vectorstore.similarity_search(
+                    query, k=k, filter={"type": doc_type}
+                )
+                for doc in results:
+                    if doc.page_content not in seen:
+                        docs.append(doc)
+                        seen.add(doc.page_content)
+                        break
+            except Exception:
+                continue
         
         return docs
     
@@ -189,6 +237,7 @@ class RAGRetriever:
         top_k: int
     ) -> List[Document]:
         """Reranker 精排"""
+        from src.text_processing import extract_key_terms, tokenize_text, normalize_query
         pairs = [[query, doc.page_content] for doc in docs]
         scores = self.reranker.predict(pairs)
         
@@ -196,8 +245,13 @@ class RAGRetriever:
         
         # 额外加分规则
         final_pairs = []
+        key_terms = extract_key_terms(query)
         for doc, score in doc_scores:
             final_score = score
+            if key_terms:
+                doc_tokens = set(tokenize_text(normalize_query(doc.page_content)))
+                overlap = sum(1 for t in key_terms if t in doc_tokens)
+                final_score += min(1.0, overlap * 0.2)
             
             # 事件类问题加分
             if "[EVENT:" in doc.page_content:

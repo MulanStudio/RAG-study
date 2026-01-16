@@ -26,6 +26,14 @@ data/
 pip install -r requirements.txt
 ```
 
+可选（图片 OCR，提升图片问答覆盖）：
+
+```bash
+# macOS
+brew install tesseract
+python3 -m pip install pytesseract
+```
+
 ### 3. 启动 Ollama
 
 ```bash
@@ -52,6 +60,16 @@ streamlit run streamlit_app.py
 python app.py --question "SLB 的 2023 年营收是多少？"
 ```
 
+### 5. 批量回答 Excel
+
+比赛题目 Excel（列：no./question/answer）可直接回写答案：
+
+```bash
+python3 batch_answer_excel.py --input data/questions.xlsx
+```
+
+默认配置在 `config/config.yaml` 的 `batch_answer`，支持断点续跑与定期保存。
+
 ---
 
 ## 📁 项目结构
@@ -71,6 +89,8 @@ RAG-study/
 ├── app.py                   # 主应用入口
 ├── streamlit_app.py         # Web UI
 ├── benchmark_challenge.py   # 评测脚本
+├── rag_eval.py              # RAG 评测脚本 (LLM-as-a-judge)
+├── batch_answer_excel.py    # 批量回答 Excel
 ├── requirements.txt         # 依赖清单
 ├── TEAM_GUIDE.md           # 团队分工指南
 └── README.md
@@ -88,12 +108,21 @@ models:
   llm:
     model_name: "qwen2.5:3b"  # 可以换成其他模型
   embedding:
-    model_name: "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    model_name: "sentence-transformers/all-MiniLM-L6-v2"
 
 # 检索配置
 retrieval:
   k_excel: 10      # Excel 数据召回数量
   k_word: 5        # Word 文档召回数量
+
+# 批量问答（Excel）
+batch_answer:
+  input_path: "data/questions.xlsx"
+  output_path: ""  # 留空则覆盖输入文件
+  question_col: "question"
+  answer_col: "answer"
+  resume: true
+  save_every: 5
 
 # Prompt 配置（可自定义）
 prompts:
@@ -177,8 +206,11 @@ prompts:
 ## 📊 评测
 
 ```bash
-# 运行评测
+# 运行评测（旧）
 python benchmark_challenge.py
+
+# 运行评测（通用 LLM-as-a-judge）
+python rag_eval.py
 
 # 输出示例
 🧪 Testing: 比较类问题
@@ -201,6 +233,12 @@ ollama serve
 ```bash
 # 下载 VLM 模型
 ollama pull llava
+```
+
+**Q: 想要图片 OCR**
+```bash
+brew install tesseract
+python3 -m pip install pytesseract
 ```
 
 **Q: 检索效果不好**

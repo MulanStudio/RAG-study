@@ -1,0 +1,237 @@
+{
+  "timestamp": "2026-01-16T08:43:36.046015Z",
+  "model": "qwen2.5:3b",
+  "results": [
+    {
+      "id": "math_basic",
+      "tag": "commonsense/math",
+      "question": "1+1",
+      "standard_answer": "2",
+      "answer": "2",
+      "scores": {
+        "answer_correctness": 5
+      },
+      "judge_raw": {
+        "answer_correctness": "Math commonsense: exact match."
+      },
+      "retrieval_debug": {
+        "original_query": "1+1",
+        "normalized_query": "1+1",
+        "decomposition": {
+          "is_complex": false,
+          "sub_queries": [
+            "1+1"
+          ],
+          "aggregation_type": "single",
+          "reasoning": "The input is a simple arithmetic operation, so it should be returned as-is."
+        },
+        "hyde": {
+          "original_query": "1+1",
+          "hypothetical_doc": "In this hypothetical technical context, the sum of 1 + 1 is expressed as 2, representing the simplest binary addition operation in computing. In many digital systems and arithmetic operations within p...",
+          "query_type": "default",
+          "hyde_used": true
+        },
+        "rrf_fusion": "Merged 3 rankings"
+      },
+      "generation_debug": {
+        "commonsense_math": "answered"
+      }
+    },
+    {
+      "id": "geo_perm",
+      "tag": "csv/analysis",
+      "question": "Which geological zone has the highest permeability, and what is its lithology?",
+      "standard_answer": "Zone_A, Sandstone",
+      "answer": "Source File: Seismic_Analysis.csv | Layer: Zone_A | Depth_Top_m: 3200 | Depth_Bottom_m: 3250.0 | Lithology: Sandstone | Porosity_Avg: 18% | Permeability_mD: 250.0 | HC_Saturation: 65% | Interpretation: Pay Zone (Oil) Source File: Seismic_Analysis.csv | Layer: Zone_B | Depth_Top_m: 3250 | Depth_Bottom_m: 3300.0 | Lithology: Shale | Porosity_Avg: 4% | Permeability_mD: 0.01 | HC_Saturation: 10% | Interpretation: Cap Rock",
+      "scores": {
+        "answer_correctness": 3
+      },
+      "judge_raw": {
+        "answer_correctness": "Score: 3\nReason: The submitted answer provides details about Zone_A, including its depth range and lithology as Sandstone. However, it does not explicitly state that Zone_A has the highest permeability among all zones listed in the file. While this information is correct, it lacks the direct statement of which zone has the highest permeability."
+      },
+      "retrieval_debug": {
+        "original_query": "Which geological zone has the highest permeability, and what is its lithology?",
+        "normalized_query": "which geological zone has the highest permeability, and what is its lithology?",
+        "decomposition": {
+          "is_complex": true,
+          "sub_queries": [
+            "Which geological zone has the highest permeability?",
+            "What is its lithology?"
+          ],
+          "aggregation_type": "single",
+          "reasoning": "The original question asks for both the geographical area with the highest permeability and its lithological characteristics. This requires two separate sub-questions to address each part independently."
+        },
+        "hyde": {
+          "original_query": "what is its lithology?",
+          "hypothetical_doc": "In the context of oil and gas exploration and development, the term \"lithology\" refers to the composition, structure, and origin of rock layers within a subsurface formation. This fundamental concept ...",
+          "query_type": "technical",
+          "hyde_used": true
+        },
+        "rrf_fusion": "Merged 6 rankings"
+      },
+      "generation_debug": {
+        "crag_status": "rewrite_triggered",
+        "rewritten_query": "What geological zone exhibits the highest permeability, and what are its lithological characteristics?",
+        "faithfulness_guard": "extractive_fallback"
+      }
+    },
+    {
+      "id": "latam_q3_revenue",
+      "tag": "csv/finance",
+      "question": "What is the Q3 2024 revenue (M USD) for Latin America?",
+      "standard_answer": "340.0",
+      "answer": "Source File: Q3_2024_Financial_Deep_Dive.csv | Region: International | Segment: Latin America | Metric: Revenue_M_USD | Q1_2024: 300.1 | Q2_2024: 310.5 | Q3_2024: 340.0 | YoY_Growth: 12.0% | Notes: Argentina expansion Source File: Q3_2024_Financial_Deep_Dive.csv | Region: North America | Segment: Offshore | Metric: Revenue_M_USD | Q1_2024: 120.0 | Q2_2024: 115.5 | Q3_2024: 130.2 | YoY_Growth: 8.5% | Notes: New contract in GoM",
+      "scores": {
+        "answer_correctness": 5
+      },
+      "judge_raw": {
+        "answer_correctness": "Score: 5\nReason: The submitted answer correctly identifies the Q3_2024 revenue for Latin America as 340.0 M USD, matching the standard answer exactly. The provided file path and additional information are also correct but do not affect the numeric accuracy."
+      },
+      "retrieval_debug": {
+        "original_query": "What is the Q3 2024 revenue (M USD) for Latin America?",
+        "normalized_query": "what is the q3 2024 revenue (m usd) for latin america?",
+        "decomposition": {
+          "is_complex": true,
+          "sub_queries": [
+            "What is the revenue for Latin America in Q3 2024?",
+            "What is the unit of measurement (M USD)?"
+          ],
+          "aggregation_type": "summarize",
+          "reasoning": "The question asks for a specific value and its unit. I broke it into two parts: finding the revenue and identifying the unit."
+        },
+        "hyde": {
+          "original_query": "what is the unit of measurement (m usd)?",
+          "hypothetical_doc": "In oil and gas engineering, specific units are used to measure economic impacts directly related to operations. One such example pertains to cost accounting and financial analyses in the industry. The...",
+          "query_type": "technical",
+          "hyde_used": true
+        },
+        "rrf_fusion": "Merged 6 rankings"
+      },
+      "generation_debug": {
+        "crag_status": "rewrite_triggered",
+        "rewritten_query": "What was the Q3 2024 revenue (in M USD) in Latin America?",
+        "coverage_guard": "extractive_fallback"
+      }
+    },
+    {
+      "id": "me_q3_revenue",
+      "tag": "csv/finance",
+      "question": "What is the Q3 2024 revenue (M USD) for the Middle East?",
+      "standard_answer": "850.5",
+      "answer": "Source File: Q3_2024_Financial_Deep_Dive.csv | Region: International | Segment: Middle East | Metric: Revenue_M_USD | Q1_2024: 800.5 | Q2_2024: 820.0 | Q3_2024: 850.5 | YoY_Growth: 3.5% | Notes: OPEC+ quotas impact Source File: Q3_2024_Financial_Deep_Dive.csv | Region: International | Segment: Latin America | Metric: Revenue_M_USD | Q1_2024: 300.1 | Q2_2024: 310.5 | Q3_2024: 340.0 | YoY_Growth: 12.0% | Notes: Argentina expansion",
+      "scores": {
+        "answer_correctness": 3
+      },
+      "judge_raw": {
+        "answer_correctness": "Score: 3\nReason: The submitted answer correctly identifies the source file and provides all the necessary information, including the region (Middle East), segment, metric, and year. However, it also includes additional data for Latin America which is not requested in the question. Additionally, the submission does not explicitly state that 850.5 M USD corresponds to Q3 2024 revenue for the Middle East without referencing the file again."
+      },
+      "retrieval_debug": {
+        "original_query": "What is the Q3 2024 revenue (M USD) for the Middle East?",
+        "normalized_query": "what is the q3 2024 revenue (m usd) for the middle east?",
+        "decomposition": {
+          "is_complex": true,
+          "sub_queries": [
+            "What is the revenue of Middle East in Q3 2024?",
+            "Is there a specific value given for Q3 2024? If so, what is it?",
+            "How is this value expressed (e.g., M USD)?"
+          ],
+          "aggregation_type": "single",
+          "reasoning": "The question asks for the revenue of Middle East in Q3 2024. However, it also implicitly asks if a specific numeric value is provided and how that value is formatted."
+        },
+        "hyde": {
+          "original_query": "how is this value expressed (e.g., m usd)?",
+          "hypothetical_doc": "### Expression of Oil and Gas Production Value\n\nIn the context of oil and gas production, various values are commonly reported using specific units. One common example involves expressing the total re...",
+          "query_type": "technical",
+          "hyde_used": true
+        },
+        "rrf_fusion": "Merged 9 rankings"
+      },
+      "generation_debug": {
+        "crag_status": "rewrite_triggered",
+        "rewritten_query": "What was the Q3 2024 revenue in millions of US dollars for the Middle East region?",
+        "coverage_guard": "extractive_fallback"
+      }
+    },
+    {
+      "id": "digital_churn",
+      "tag": "csv/finance",
+      "question": "What is the Q3 2024 churn rate for Global Digital Solutions?",
+      "standard_answer": "1.8%",
+      "answer": "Source File: Q3_2024_Financial_Deep_Dive.csv | Region: Global | Segment: Digital Solutions | Metric: Churn_Rate | Q1_2024: 2.1% | Q2_2024: 1.9% | Q3_2024: 1.8% | YoY_Growth: -14% | Notes: Customer retention high Source File: Q3_2024_Financial_Deep_Dive.csv | Region: Global | Segment: Digital Solutions | Metric: ARR_M_USD | Q1_2024: 50.2 | Q2_2024: 55.1 | Q3_2024: 62.8 | YoY_Growth: 25.0% | Notes: AI adoption surging",
+      "scores": {
+        "answer_correctness": 3
+      },
+      "judge_raw": {
+        "answer_correctness": "Score: 3\nReason: The submitted answer provides the Q3 2024 churn rate for Global Digital Solutions as 1.8%, which matches exactly with the standard answer provided in the question. However, the submitted answer also includes additional data points (such as Year-over-Year Growth and Notes) that are not requested by the specific question about only the Q3 2024 churn rate. This extra information might be relevant for a more comprehensive evaluation but does not affect the core correctness of the churn rate itself."
+      },
+      "retrieval_debug": {
+        "original_query": "What is the Q3 2024 churn rate for Global Digital Solutions?",
+        "normalized_query": "what is the q3 2024 churn rate for global digital solutions?",
+        "decomposition": {
+          "is_complex": true,
+          "sub_queries": [
+            "What is the Q3 2024 churn rate for Global Digital Solutions?",
+            "Why did the churn rate change in Q3 2024?",
+            "What actions were taken to address the churn rate issues?"
+          ],
+          "aggregation_type": "summarize",
+          "reasoning": "The question involves a single entity (Global Digital Solutions) and multiple aspects: current churn rate, changes that occurred, and responses. This decomposition allows for a comprehensive understanding of the situation."
+        },
+        "hyde": {
+          "original_query": "what actions were taken to address the churn rate issues?",
+          "hypothetical_doc": "To mitigate the churn rate issues, our team implemented targeted marketing campaigns and enhanced customer service protocols. Specifically, we conducted A/B testing for email communication strategies ...",
+          "query_type": "default",
+          "hyde_used": true
+        },
+        "rrf_fusion": "Merged 9 rankings"
+      },
+      "generation_debug": {
+        "crag_status": "rewrite_triggered",
+        "rewritten_query": "What was the Global Digital Solutions' churn rate in Q3 2024?",
+        "faithfulness_guard": "extractive_fallback"
+      }
+    },
+    {
+      "id": "fcf_q3",
+      "tag": "csv/finance",
+      "question": "What is the Q3 2024 free cash flow (M USD)?",
+      "standard_answer": "210.0",
+      "answer": "Source File: Q3_2024_Financial_Deep_Dive.csv | Region: Total | Segment: All | Metric: Free_Cash_Flow_M_USD | Q1_2024: 150.0 | Q2_2024: 180.5 | Q3_2024: 210.0 | YoY_Growth: 20.0% | Notes: Debt reduction priority Source File: Q3_2024_Financial_Deep_Dive.csv | Region: International | Segment: Middle East | Metric: Revenue_M_USD | Q1_2024: 800.5 | Q2_2024: 820.0 | Q3_2024: 850.5 | YoY_Growth: 3.5% | Notes: OPEC+ quotas impact",
+      "scores": {
+        "answer_correctness": 5
+      },
+      "judge_raw": {
+        "answer_correctness": "Score: 5\nReason: The submitted answer correctly references the Source File and provides all requested metrics including Q3_2024 Free_Cash_Flow_M_USD, which is explicitly stated as 210.0 USD in the provided data."
+      },
+      "retrieval_debug": {
+        "original_query": "What is the Q3 2024 free cash flow (M USD)?",
+        "normalized_query": "what is the q3 2024 free cash flow (m usd)?",
+        "decomposition": {
+          "is_complex": false,
+          "sub_queries": [
+            "What is the Q3 2024 free cash flow (M USD)?"
+          ],
+          "aggregation_type": "single",
+          "reasoning": "The question already asks for a single piece of information, so no further decomposition is needed."
+        },
+        "hyde": {
+          "original_query": "what is the q3 2024 free cash flow (m usd)?",
+          "hypothetical_doc": "In preparation for Q3 2024, it is imperative to understand the financial health of the Oil & Gas operations. The free cash flow in the third quarter of 2024 was recorded at $56 million US dollars (USD...",
+          "query_type": "technical",
+          "hyde_used": true
+        },
+        "rrf_fusion": "Merged 3 rankings"
+      },
+      "generation_debug": {
+        "crag_status": "rewrite_triggered",
+        "rewritten_query": "What was the free cash flow in Q3 2024, expressed in millions of US dollars?",
+        "faithfulness_guard": "extractive_fallback"
+      }
+    }
+  ],
+  "error_stats": {
+    "missing_standard": 0,
+    "low_correctness": 0,
+    "scored_cases": 5
+  }
+}

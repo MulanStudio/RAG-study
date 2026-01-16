@@ -25,8 +25,8 @@ Answer the user's question based on the Context provided.
 
 INSTRUCTIONS:
 1. Answer in the SAME LANGUAGE as the question.
-2. Cite specific numbers and data from the context.
-3. If the answer is not in the context, say "I cannot find this information."
+2. Do NOT include citations or source-referencing language.
+3. If the answer is not in the context, say "I don't know."
 
 Context:
 {context}
@@ -50,7 +50,26 @@ Rewritten:""",
 
 Original Question: {original_query}
 
-Provide a clear comparison with specific data points."""
+Provide a clear comparison with specific data points.""",
+
+        "faithfulness_check": """You are a strict fact-checker.
+Question: {query}
+Answer: {answer}
+Context: {context}
+
+Is the answer fully supported by the context? Answer only 'yes' or 'no'."""
+        ,
+        "choice_answer": """You are answering a multiple-choice question.
+Answer format must be: "<OptionLetter>. <OptionText>".
+No explanation.
+
+Context:
+{context}
+
+Question:
+{query}
+
+Answer:"""
     }
     
     def __init__(self, config_path: str = None):
@@ -156,6 +175,105 @@ class AnswerGenerator:
         self.llm = llm
         self.prompts = prompt_manager
         self.crag = CRAGModule(llm, prompt_manager)
+
+    def _detect_language(self, text: str) -> str:
+        for ch in text:
+            if "\u4e00" <= ch <= "\u9fff":
+                return "zh"
+        return "en"
+
+    def _refusal_message(self, query: str) -> str:
+        if self._detect_language(query) == "zh":
+            return "不知道。"
+        return "I don't know."
+
+    def _verify_answer(self, query: str, answer: str, context: str) -> bool:
+        if not self.llm:
+            return True
+
+    def _covers_key_items(self, query: str, answer: str) -> bool:
+        """检查答案是否覆盖问题中的关键项（轻量规则）"""
+        from src.text_processing import tokenize_text, normalize_query, extract_key_terms
+        a_norm = normalize_query(answer)
+        a_tokens = set(tokenize_text(a_norm))
+        key_terms = extract_key_terms(query)
+        if not key_terms:
+            return True
+        
+        if any(ch.isdigit() for ch in query) and not any(ch.isdigit() for ch in answer):
+            return False
+        return any(t in a_tokens for t in key_terms)
+
+    def _extractive_fallback(self, query: str, documents: List[Document]) -> str:
+        """从上下文中抽取与问题最相关的片段作为答案"""
+        from src.text_processing import extract_key_terms
+        import re
+
+        if not documents:
+            return self._refusal_message(query)
+
+        key_terms = extract_key_terms(query)
+        candidates = []
+
+        for doc in documents[:5]:
+            text = doc.page_content.replace("\n", " ")
+            sentences = re.split(r"(?<=[.!?])\s+", text)
+            for sent in sentences:
+                if not sent.strip():
+                    continue
+                score = sum(1 for t in key_terms if t in sent.lower())
+                if any(ch.isdigit() for ch in sent):
+                    score += 1
+                if score > 0:
+                    candidates.append((score, sent.strip()))
+
+        if not candidates:
+            return self._refusal_message(query)
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        top_sents = [s for _, s in candidates[:2]]
+        return " ".join(top_sents)
+
+    def _extract_choice_options(self, query: str) -> List[Tuple[str, str]]:
+        """从题目中提取选项列表"""
+        import re
+        options = []
+        pattern = re.compile(r"^\s*([A-H])[\).:\-]\s*(.+)$")
+        for line in query.splitlines():
+            match = pattern.match(line.strip())
+            if match:
+                options.append((match.group(1), match.group(2).strip()))
+        return options
+
+    def _format_choice_answer(self, answer: str, options: List[Tuple[str, str]]) -> str:
+        """确保选择题输出格式为 'A. Option text'"""
+        if not options:
+            return answer
+        mapping = {k.upper(): v for k, v in options}
+        answer_clean = answer.strip()
+        # 仅选项字母
+        if len(answer_clean) == 1 and answer_clean.upper() in mapping:
+            return f"{answer_clean.upper()}. {mapping[answer_clean.upper()]}"
+        # 形如 "A" or "A."
+        if answer_clean[:1].upper() in mapping:
+            letter = answer_clean[:1].upper()
+            return f"{letter}. {mapping[letter]}"
+        # 选项文本匹配
+        for letter, text in options:
+            if text.lower() in answer_clean.lower():
+                return f"{letter}. {text}"
+        return answer
+        prompt = self.prompts.format(
+            "faithfulness_check",
+            query=query,
+            answer=answer,
+            context=context[:3000]
+        )
+        try:
+            verdict = self.llm.invoke(prompt).content.strip().lower()
+            return verdict.startswith("yes")
+        except Exception:
+            return True
     
     def generate(
         self,
@@ -175,12 +293,19 @@ class AnswerGenerator:
             (answer, debug_info)
         """
         debug_info = {}
+        from src.text_processing import is_commonsense_math, solve_commonsense_math
+
+        if is_commonsense_math(query):
+            answer = solve_commonsense_math(query)
+            if answer:
+                debug_info["commonsense_math"] = "answered"
+                return answer, debug_info
         
         if not self.llm:
             return "LLM 不可用", debug_info
         
         if not documents:
-            return "未找到相关文档", debug_info
+            return self._refusal_message(query), debug_info
         
         final_docs = documents
         
@@ -199,10 +324,12 @@ class AnswerGenerator:
         
         # 构建上下文
         context = "\n\n".join([doc.page_content for doc in final_docs])
-        
-        # 生成答案
+
+        # 选择题优先
+        choice_options = self._extract_choice_options(query)
+        prompt_name = "choice_answer" if choice_options else "generation"
         prompt = self.prompts.format(
-            "generation",
+            prompt_name,
             context=context,
             query=query
         )
@@ -212,6 +339,18 @@ class AnswerGenerator:
             answer = response.content
         except Exception as e:
             answer = f"生成失败: {e}"
+            return answer, debug_info
+
+        if choice_options:
+            answer = self._format_choice_answer(answer, choice_options)
+
+        if not self._covers_key_items(query, answer):
+            debug_info["coverage_guard"] = "extractive_fallback"
+            return self._extractive_fallback(query, final_docs), debug_info
+
+        if not self._verify_answer(query, answer, context):
+            debug_info["faithfulness_guard"] = "extractive_fallback"
+            return self._extractive_fallback(query, final_docs), debug_info
         
         return answer, debug_info
     
