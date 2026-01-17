@@ -229,6 +229,9 @@ class OilfieldRAG:
         emb_cfg = self.config["models"]["embedding"]
         provider = emb_cfg.get("provider", "huggingface")
         
+        # 过滤空内容，避免 embedding 报错
+        docs = [doc for doc in docs if doc.page_content and doc.page_content.strip()]
+        
         if provider == "azure_openai":
             from src.member_e_system.azure_openai_client import (
                 create_azure_openai_client,

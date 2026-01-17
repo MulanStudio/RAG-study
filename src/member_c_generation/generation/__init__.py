@@ -273,6 +273,21 @@ class AnswerGenerator:
         for letter, text in options:
             if text.lower() in answer_clean.lower():
                 return f"{letter}. {text}"
+        # 实体/缩写匹配
+        import re
+        ans_tokens = set(re.findall(r"[A-Za-z0-9]+", answer_clean))
+        for letter, text in options:
+            opt_tokens = set(re.findall(r"[A-Za-z0-9]+", text))
+            if ans_tokens & opt_tokens:
+                return f"{letter}. {text}"
+        # 数值匹配
+        import re
+        ans_nums = [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", answer_clean)]
+        if ans_nums:
+            for letter, text in options:
+                opt_nums = [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", text)]
+                if any(abs(a - o) < 1e-6 for a in ans_nums for o in opt_nums):
+                    return f"{letter}. {text}"
         return answer
     
     def _extract_numbers(self, text: str) -> List[Tuple[float, str]]:
@@ -303,6 +318,21 @@ class AnswerGenerator:
                 record[key.strip().lower()] = val.strip()
         return record
 
+    def _extract_entities(self, query: str) -> List[str]:
+        """提取问题中的实体（如公司缩写）"""
+        import re
+        entities = re.findall(r"\b[A-Z]{2,}\b", query)
+        return [e.strip() for e in entities if e.strip()]
+
+    def _extract_layer_names(self, query: str) -> List[str]:
+        """提取地层/层位名称（如 Zone_A）"""
+        import re
+        names = re.findall(r"\bZone_[A-Za-z0-9]+\b", query)
+        if names:
+            return names
+        matches = re.findall(r"\bLayer\s+([A-Za-z0-9_]+)\b", query, flags=re.IGNORECASE)
+        return [m.strip() for m in matches if m.strip()]
+
     def _match_record(self, query: str, record: Dict[str, str]) -> int:
         """根据查询匹配记录，返回匹配分数"""
         from src.member_b_retrieval.text_processing import extract_key_terms
@@ -312,11 +342,41 @@ class AnswerGenerator:
             for k, v in record.items():
                 if term in k or term in v.lower():
                     score += 1
+        entities = self._extract_entities(query)
+        if entities:
+            record_text = " ".join([f"{k} {v}" for k, v in record.items()]).lower()
+            for ent in entities:
+                if ent.lower() in record_text:
+                    score += 3
         return score
 
-    def _pick_value_by_query(self, query: str, record: Dict[str, str]) -> Optional[str]:
+    def _pick_value_by_query(self, query: str, record: Dict[str, str]) -> Optional[Tuple[str, str]]:
         """根据问题挑选最可能的字段值"""
         from src.member_b_retrieval.text_processing import extract_key_terms
+        q_lower = query.lower()
+        if "厚度" in q_lower or "thickness" in q_lower:
+            return None
+        if ("porosity" in q_lower or "孔隙度" in q_lower) and "porosity_avg" in record:
+            return record.get("porosity_avg"), "porosity_avg"
+        if ("permeability" in q_lower or "渗透率" in q_lower) and "permeability_md" in record:
+            return record.get("permeability_md"), "permeability_md"
+        # 直接匹配季度字段
+        if ("q1" in q_lower and "2024" in q_lower) and "q1_2024" in record:
+            return record.get("q1_2024"), "q1_2024"
+        if ("q2" in q_lower and "2024" in q_lower) and "q2_2024" in record:
+            return record.get("q2_2024"), "q2_2024"
+        if ("q3" in q_lower and "2024" in q_lower) and "q3_2024" in record:
+            return record.get("q3_2024"), "q3_2024"
+        if ("q4" in q_lower and "2024" in q_lower) and "q4_2024" in record:
+            return record.get("q4_2024"), "q4_2024"
+        # 员工数
+        if ("employee" in q_lower or "员工" in q_lower) and "employees" in record:
+            return record.get("employees"), "employees"
+        # 营收
+        if "revenue" in q_lower or "营收" in q_lower:
+            for k in record.keys():
+                if "revenue" in k or "营收" in k:
+                    return record.get(k), k
         terms = extract_key_terms(query)
         if not terms:
             return None
@@ -328,11 +388,149 @@ class AnswerGenerator:
                 best_score = score
                 best_key = k
         if best_key:
-            return record.get(best_key)
+            return record.get(best_key), best_key
         # fallback: 返回包含数字的字段
         for k, v in record.items():
             if any(ch.isdigit() for ch in v):
-                return v
+                return v, k
+        return None
+
+    def _format_value_with_unit(self, value: str, key: str) -> str:
+        """根据字段名补充单位"""
+        import re
+        if not value:
+            return value
+        if re.search(r"[a-zA-Z%]", value):
+            return value
+        key_lower = (key or "").lower()
+        if "billion" in key_lower and "usd" in key_lower:
+            return f"{value} Billion USD"
+        if ("million" in key_lower or "m_usd" in key_lower or "m usd" in key_lower) and "usd" in key_lower:
+            return f"{value} Million USD"
+        if "usd" in key_lower:
+            return f"{value} USD"
+        if "revenue" in key_lower:
+            return f"{value} Billion USD"
+        if "arr" in key_lower or "cash flow" in key_lower or "free_cash_flow" in key_lower:
+            return f"{value} Million USD"
+        if "profit" in key_lower or "income" in key_lower or "ebitda" in key_lower:
+            return f"{value} Billion USD"
+        if "margin" in key_lower or "rate" in key_lower or "porosity" in key_lower or "saturation" in key_lower:
+            return f"{value}%"
+        if "depth" in key_lower or key_lower.endswith("_m"):
+            return f"{value} m"
+        if "permeability" in key_lower:
+            return f"{value} mD"
+        if "employees" in key_lower:
+            return f"{value} employees"
+        return value
+
+    def _get_best_record(
+        self,
+        query: str,
+        documents: List[Document],
+        required_keys: Optional[List[str]] = None,
+        layer: Optional[str] = None,
+    ) -> Optional[Dict[str, str]]:
+        """返回最匹配的记录（可指定必要字段/层位）"""
+        best_record = None
+        best_score = 0
+        entities = self._extract_entities(query)
+        layers = [layer] if layer else self._extract_layer_names(query)
+        for doc in documents:
+            if "Table Record" in doc.page_content or "Source File" in doc.page_content:
+                record = self._parse_kv_record(doc.page_content)
+                if record:
+                    if required_keys and any(k not in record for k in required_keys):
+                        continue
+                    if entities:
+                        record_text = " ".join([f"{k} {v}" for k, v in record.items()]).lower()
+                        if not any(ent.lower() in record_text for ent in entities):
+                            continue
+                    if layers:
+                        layer_val = str(record.get("layer", "")).lower()
+                        if not any(l.lower() == layer_val for l in layers):
+                            continue
+                    score = self._match_record(query, record)
+                    if score > best_score:
+                        best_score = score
+                        best_record = record
+        return best_record
+
+    def _get_best_record_value(self, query: str, documents: List[Document]) -> Optional[Tuple[str, str, Dict[str, str]]]:
+        """从记录类文档中挑选最匹配的字段值"""
+        q_lower = query.lower()
+        required_keys = None
+        if "permeability" in q_lower or "渗透率" in q_lower:
+            required_keys = ["permeability_md"]
+        if "porosity" in q_lower or "孔隙度" in q_lower:
+            required_keys = ["porosity_avg"]
+        best_record = self._get_best_record(query, documents, required_keys=required_keys)
+        if not best_record:
+            return None
+        picked = self._pick_value_by_query(query, best_record)
+        if not picked:
+            return None
+        value, key = picked
+        value = self._format_value_with_unit(value, key)
+        return value, key, best_record
+
+    def _match_choice_by_value(self, options: List[Tuple[str, str]], value_text: str) -> Optional[str]:
+        """根据数值或文本匹配选项"""
+        if not value_text:
+            return None
+        # 直接命中文本
+        for letter, text in options:
+            if text.lower() in value_text.lower():
+                return f"{letter}. {text}"
+        # 实体/缩写匹配
+        import re
+        tokens = set(re.findall(r"[A-Za-z0-9]+", value_text))
+        for letter, text in options:
+            opt_tokens = set(re.findall(r"[A-Za-z0-9]+", text))
+            if tokens & opt_tokens:
+                return f"{letter}. {text}"
+        # 数值匹配
+        def nums(text: str) -> List[float]:
+            import re
+            return [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", text)]
+        val_nums = nums(value_text)
+        if not val_nums:
+            return None
+        for letter, text in options:
+            opt_nums = nums(text)
+            for vn in val_nums:
+                if any(abs(vn - on) < 1e-6 for on in opt_nums):
+                    return f"{letter}. {text}"
+        return None
+
+    def _resolve_choice_from_records(
+        self, query: str, options: List[Tuple[str, str]], documents: List[Document]
+    ) -> Optional[str]:
+        """优先用结构化记录解析选择题"""
+        # 1) 基于最佳记录的字段值
+        best = self._get_best_record_value(query, documents)
+        if best:
+            value_text, _, _ = best
+            matched = self._match_choice_by_value(options, value_text)
+            if matched:
+                return matched
+            # 选项为公司/实体名时：匹配记录字段
+            _, _, record = best
+            record_text = " ".join(str(v) for v in record.values()).lower()
+            for letter, opt_text in options:
+                if opt_text.lower() in record_text:
+                    return f"{letter}. {opt_text}"
+        # 2) 问题中带数值时：从记录中找对应选项
+        import re
+        q_nums = re.findall(r"-?\d+(?:\.\d+)?", query)
+        if q_nums:
+            for doc in documents:
+                text = doc.page_content
+                if any(n in text for n in q_nums):
+                    for letter, opt_text in options:
+                        if opt_text.lower() in text.lower():
+                            return f"{letter}. {opt_text}"
         return None
 
     def _extract_compare_entities(self, query: str) -> List[str]:
@@ -357,21 +555,109 @@ class AnswerGenerator:
         compare_keywords = ["compare", "higher", "lower", "greater", "less", "largest", "smallest", "vs", "versus"]
         calc_keywords = ["sum", "total", "difference", "increase", "decrease", "average", "avg"]
 
+        # 差值计算（同一记录内 Qx/Qy）
+        if ("difference" in q_lower or "差值" in q_lower) and ("q3" in q_lower and "q2" in q_lower):
+            best_record = self._get_best_record(query, documents, required_keys=["q2_2024", "q3_2024"])
+            if best_record:
+                try:
+                    q2 = float(str(best_record["q2_2024"]).replace("%", "").strip())
+                    q3 = float(str(best_record["q3_2024"]).replace("%", "").strip())
+                    diff = round(abs(q3 - q2), 2)
+                    metric = str(best_record.get("metric", "")).lower()
+                    if "m_usd" in metric:
+                        return f"{diff} Million USD"
+                    if "usd" in metric:
+                        return f"{diff} USD"
+                    if "margin" in metric or "rate" in metric:
+                        return f"{diff}%"
+                    return str(diff)
+                except Exception:
+                    pass
+        if ("difference" in q_lower or "差值" in q_lower) and ("q3" in q_lower and "q1" in q_lower):
+            best_record = self._get_best_record(query, documents, required_keys=["q1_2024", "q3_2024"])
+            if best_record:
+                try:
+                    q1 = float(str(best_record["q1_2024"]).replace("%", "").strip())
+                    q3 = float(str(best_record["q3_2024"]).replace("%", "").strip())
+                    diff = round(abs(q3 - q1), 2)
+                    metric = str(best_record.get("metric", "")).lower()
+                    if "m_usd" in metric:
+                        return f"{diff} Million USD"
+                    if "usd" in metric:
+                        return f"{diff} USD"
+                    if "margin" in metric or "rate" in metric:
+                        return f"{diff}%"
+                    return str(diff)
+                except Exception:
+                    pass
+
+        # 平均值计算（同一记录内 Q1/Q2 等）
+        if ("average" in q_lower or "平均" in q_lower) and "q1" in q_lower and "q2" in q_lower:
+            best_record = self._get_best_record(query, documents, required_keys=["q1_2024", "q2_2024"])
+            if best_record:
+                try:
+                    q1 = float(str(best_record["q1_2024"]).replace("%", "").strip())
+                    q2 = float(str(best_record["q2_2024"]).replace("%", "").strip())
+                    avg = round((q1 + q2) / 2, 2)
+                    metric = str(best_record.get("metric", "")).lower()
+                    if "m_usd" in metric:
+                        return f"{avg} Million USD"
+                    if "usd" in metric:
+                        return f"{avg} USD"
+                    if "margin" in metric or "rate" in metric:
+                        return f"{avg}%"
+                    return str(avg)
+                except Exception:
+                    pass
+
+        # Porosity 平均值（指定多个层位）
+        if ("porosity" in q_lower or "孔隙度" in q_lower) and ("平均" in q_lower or "average" in q_lower):
+            layers = self._extract_layer_names(query)
+            if len(layers) >= 2:
+                values = []
+                for layer in layers[:2]:
+                    rec = self._get_best_record(
+                        query, documents, required_keys=["porosity_avg"], layer=layer
+                    )
+                    if rec and "porosity_avg" in rec:
+                        try:
+                            values.append(float(str(rec["porosity_avg"]).replace("%", "").strip()))
+                        except Exception:
+                            pass
+                if len(values) == 2:
+                    avg = (values[0] + values[1]) / 2
+                    return f"{avg}%"
+
+        # 渗透率
+        if "permeability" in q_lower or "渗透率" in q_lower:
+            layers = self._extract_layer_names(query)
+            layer = layers[0] if layers else None
+            rec = self._get_best_record(query, documents, required_keys=["permeability_md"], layer=layer)
+            if rec and "permeability_md" in rec:
+                return self._format_value_with_unit(rec["permeability_md"], "permeability_md")
+
+        # 厚度计算
+        if "厚度" in q_lower or "thickness" in q_lower:
+            best_record = self._get_best_record(
+                query, documents, required_keys=["depth_top_m", "depth_bottom_m"]
+            )
+            if best_record:
+                try:
+                    top = float(best_record["depth_top_m"])
+                    bottom = float(best_record["depth_bottom_m"])
+                    thickness = bottom - top
+                    return f"{thickness} m"
+                except Exception:
+                    pass
+
         # 直接字段查询（表格/记录类）
-        best_record = None
-        best_score = 0
-        for doc in documents:
-            if "Table Record" in doc.page_content or "Source File" in doc.page_content:
-                record = self._parse_kv_record(doc.page_content)
-                if record:
-                    score = self._match_record(query, record)
-                    if score > best_score:
-                        best_score = score
-                        best_record = record
-        if best_record:
-            value = self._pick_value_by_query(query, best_record)
-            if value:
-                return value
+        best = self._get_best_record_value(query, documents)
+        if best:
+            value, _, _ = best
+            entities = self._extract_entities(query)
+            if entities:
+                return f"{entities[0]}: {value}"
+            return value
 
         # 比较类
         if any(k in q_lower for k in compare_keywords):
@@ -476,18 +762,27 @@ class AnswerGenerator:
                 debug_info["crag_status"] = "passed"
                 final_docs = filtered_docs if filtered_docs else documents
         
-        # 尝试材料内计算/比较
-        calc_answer = self._try_context_calculation(query, final_docs)
-        if calc_answer:
-            debug_info["context_calc"] = "answered"
-            return calc_answer, debug_info
-
         # 构建上下文
         context = "\n\n".join([doc.page_content for doc in final_docs])
 
         # 选择题优先
         choice_options = self._extract_choice_options(query)
         prompt_name = "choice_answer" if choice_options else "generation"
+        if choice_options:
+            resolved = self._resolve_choice_from_records(query, choice_options, final_docs)
+            if resolved:
+                return resolved, debug_info
+
+        # 尝试材料内计算/比较
+        calc_answer = self._try_context_calculation(query, final_docs)
+        if calc_answer:
+            debug_info["context_calc"] = "answered"
+            if choice_options:
+                mapped = self._match_choice_by_value(choice_options, calc_answer)
+                if mapped:
+                    return mapped, debug_info
+                return self._format_choice_answer(calc_answer, choice_options), debug_info
+            return calc_answer, debug_info
         prompt = self.prompts.format(
             prompt_name,
             context=context,

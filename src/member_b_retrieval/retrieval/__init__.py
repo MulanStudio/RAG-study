@@ -138,7 +138,28 @@ class RAGRetriever:
         else:
             final_docs = parent_docs[:top_k]
         
+        # Step 7: 实体类问题保底（如公司营收）
+        final_docs = self._ensure_entity_record_in_top(query, final_docs, top_k)
+        
         return final_docs, debug_info
+
+    def _ensure_entity_record_in_top(self, query: str, docs: List[Document], top_k: int) -> List[Document]:
+        q_lower = query.lower()
+        if not ("revenue" in q_lower or "营收" in q_lower or "employee" in q_lower or "员工" in q_lower):
+            return docs
+        entities = self._extract_entities(query)
+        if not entities:
+            return docs
+        seen = set(doc.page_content for doc in docs)
+        for doc in self.splits:
+            if doc.metadata.get("type") == "excel_record":
+                content_lower = doc.page_content.lower()
+                if any(ent.lower() in content_lower for ent in entities):
+                    if doc.page_content not in seen:
+                        docs = [doc] + docs
+                        seen.add(doc.page_content)
+                    break
+        return docs[:top_k]
     
     def _grouped_vector_search(self, query: str, intent: str = "general") -> List[Document]:
         """分组向量检索"""
@@ -189,8 +210,14 @@ class RAGRetriever:
         cfg = self.config.get("retrieval", {})
         must_types = cfg.get(
             "must_include_types",
-            ["pdf_table_record", "ppt_slide", "image_caption"]
+            ["pdf_table_record", "excel_record", "ppt_slide", "image_caption"]
         )
+        q_lower = query.lower()
+        if "revenue" in q_lower or "营收" in q_lower or "usd" in q_lower:
+            if "excel_record" not in must_types:
+                must_types.append("excel_record")
+            if "pdf_table_record" not in must_types:
+                must_types.append("pdf_table_record")
         if not must_types:
             return docs
 
@@ -202,6 +229,7 @@ class RAGRetriever:
             "pdf_text": cfg.get("k_pdf_text", 5),
             "ppt_slide": cfg.get("k_ppt", 5),
             "image_caption": cfg.get("k_image", 3),
+            "excel_record": cfg.get("k_excel", 10),
         }
 
         for doc_type in must_types:
@@ -219,8 +247,26 @@ class RAGRetriever:
                         break
             except Exception:
                 continue
+
+        # 关键词实体兜底：直接扫 excel_record
+        entities = self._extract_entities(query)
+        if entities:
+            for doc in self.splits:
+                if doc.metadata.get("type") == "excel_record":
+                    content_lower = doc.page_content.lower()
+                    if any(ent.lower() in content_lower for ent in entities):
+                        if doc.page_content not in seen:
+                            docs.append(doc)
+                            seen.add(doc.page_content)
+                            if len(entities) >= 1:
+                                break
         
         return docs
+
+    def _extract_entities(self, query: str) -> List[str]:
+        import re
+        entities = re.findall(r"\b[A-Z]{2,}\b", query)
+        return [e.strip() for e in entities if e.strip()]
     
     def _bm25_search(self, query: str, n: int = 15) -> List[Document]:
         """BM25 关键词检索"""
@@ -253,6 +299,7 @@ class RAGRetriever:
     ) -> List[Document]:
         """Reranker 精排"""
         from src.member_b_retrieval.text_processing import extract_key_terms, tokenize_text, normalize_query
+        entities = self._extract_entities(query)
         pairs = [[query, doc.page_content] for doc in docs]
         scores = self.reranker.predict(pairs)
         
@@ -272,6 +319,12 @@ class RAGRetriever:
             if "[EVENT:" in doc.page_content:
                 if any(kw in query.lower() for kw in ["why", "reason", "stop", "fail", "为什么"]):
                     final_score += 2.0
+
+            # 财务问题：实体匹配的 excel 记录强加分
+            if doc.metadata.get("type") == "excel_record" and entities:
+                content_lower = doc.page_content.lower()
+                if any(ent.lower() in content_lower for ent in entities):
+                    final_score += 4.0
             
             final_pairs.append((doc, final_score))
         

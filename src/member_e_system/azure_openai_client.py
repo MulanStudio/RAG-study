@@ -38,15 +38,35 @@ class AzureOpenAIEmbeddings:
         self.model = model
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        response = self.client.embeddings.create(
-            input=texts,
-            model=self.model
-        )
-        return [item.embedding for item in response.data]
+        cleaned = []
+        for t in texts:
+            if not isinstance(t, str):
+                t = str(t)
+            t = t.strip()
+            if not t:
+                t = " "
+            # 避免过长输入导致 400
+            if len(t) > 4000:
+                t = t[:4000]
+            cleaned.append(t)
+        embeddings = []
+        batch_size = 64
+        for i in range(0, len(cleaned), batch_size):
+            batch = cleaned[i:i + batch_size]
+            response = self.client.embeddings.create(
+                input=batch,
+                model=self.model
+            )
+            embeddings.extend([item.embedding for item in response.data])
+        return embeddings
 
     def embed_query(self, text: str) -> List[float]:
+        t = text if isinstance(text, str) else str(text)
+        t = t.strip() or " "
+        if len(t) > 4000:
+            t = t[:4000]
         response = self.client.embeddings.create(
-            input=text,
+            input=t,
             model=self.model
         )
         return response.data[0].embedding
