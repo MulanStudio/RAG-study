@@ -207,6 +207,34 @@ prompts:
     
     Confidence (0.0-1.0):
 
+  # 核心问题提取（过滤寒暄、背景、废话）
+  core_question_extraction: |
+    Extract the core question from the user input.
+    Remove ALL of the following:
+    - Greetings (你好, 您好, hello, hi, hey)
+    - Politeness phrases (请问, 谢谢, thanks, please, could you)
+    - Self-introductions (我是..., I'm..., my name is...)
+    - Background rambling (关于那个..., 就是那个...)
+    - Irrelevant context
+    
+    Keep ONLY the actual question the user wants answered.
+    Output the core question in the SAME LANGUAGE as the original.
+    If the input is already a pure question, return it unchanged.
+    
+    User input: {query}
+    
+    Core question:
+
+  # 答案-问题对齐检查
+  answer_alignment_check: |
+    Check if the answer addresses the core question.
+    
+    Core question: {core_query}
+    Answer: {answer}
+    
+    Does the answer directly address the question? Reply only 'yes' or 'no'.
+    Verdict:
+
 # -----------------------------------------------------
 # 📊 评测配置
 # -----------------------------------------------------

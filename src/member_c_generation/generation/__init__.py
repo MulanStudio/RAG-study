@@ -806,26 +806,64 @@ class AnswerGenerator:
             ans = parts[0]
         return ans
     
+    def _verify_answer_alignment(self, core_query: str, answer: str) -> bool:
+        """
+        验证答案是否与核心问题对齐
+        
+        Args:
+            core_query: 核心问题（已过滤寒暄等）
+            answer: 生成的答案
+            
+        Returns:
+            True 如果答案正确回应了核心问题
+        """
+        if not self.llm or not core_query or not answer:
+            return True
+        
+        # 如果答案是拒绝回答，跳过检查
+        refusal_indicators = ["don't know", "不知道", "cannot find", "无法找到"]
+        if any(ind in answer.lower() for ind in refusal_indicators):
+            return True
+        
+        prompt = self.prompts.format(
+            "answer_alignment_check",
+            core_query=core_query,
+            answer=answer[:500]  # 限制长度
+        )
+        
+        try:
+            response = self.llm.invoke(prompt).content.strip().lower()
+            return response.startswith("yes")
+        except Exception as e:
+            logger.warning(f"Answer alignment check failed: {e}")
+            return True  # 出错时放行
+    
     def generate(
         self,
         query: str,
         documents: List[Document],
         use_crag: bool = True,
-        retrieval_score: float = 1.0
+        retrieval_score: float = 1.0,
+        core_query: str = None
     ) -> Tuple[str, Dict]:
         """
         生成答案
         
         Args:
-            query: 用户问题
+            query: 用户问题（原始，可能包含寒暄等）
             documents: 检索到的文档
             use_crag: 是否使用 CRAG 自我修正
             retrieval_score: 检索相似度分数 (0.0-1.0)
+            core_query: 核心问题（已过滤寒暄，用于对齐检查）
         
         Returns:
             (answer, debug_info)
         """
         debug_info = {"retrieval_score": retrieval_score}
+        
+        # 如果提供了 core_query，使用它进行后续处理
+        effective_query = core_query if core_query else query
+        debug_info["effective_query"] = effective_query
         
         if not self.llm:
             return "LLM 不可用", debug_info
@@ -912,9 +950,17 @@ class AnswerGenerator:
             debug_info["coverage_guard"] = "extractive_fallback"
             return self._extractive_fallback(query, final_docs), debug_info
 
-        if not self._verify_answer(query, answer, context):
+        if not self._verify_answer(effective_query, answer, context):
             debug_info["faithfulness_guard"] = "extractive_fallback"
-            return self._extractive_fallback(query, final_docs), debug_info
+            return self._extractive_fallback(effective_query, final_docs), debug_info
+        
+        # 答案-问题对齐检查（仅当提供了 core_query 时）
+        if core_query and core_query != query:
+            if not self._verify_answer_alignment(core_query, answer):
+                debug_info["alignment_guard"] = "extractive_fallback"
+                logger.warning(f"Answer not aligned with core query: {core_query}")
+                return self._extractive_fallback(core_query, final_docs), debug_info
+            debug_info["alignment_check"] = "passed"
         
         return answer, debug_info
     

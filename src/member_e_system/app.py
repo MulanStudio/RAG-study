@@ -181,14 +181,21 @@ class OilfieldRAG:
         # 检索
         docs, retrieval_debug = self.retriever.retrieve(question, top_k=5)
         retrieval_score = retrieval_debug.get("max_similarity_score", 1.0)
+        core_query = retrieval_debug.get("core_query", question)
         
         if verbose:
             print(f"📚 检索到 {len(docs)} 个文档 (相似度: {retrieval_score:.2f})")
+            if core_query != question:
+                print(f"   💡 核心问题: {core_query}")
             for i, doc in enumerate(docs[:3], 1):
                 print(f"   {i}. {doc.page_content[:80]}...")
         
-        # 生成（传入检索分数用于置信度判断）
-        answer, gen_debug = self.generator.generate(question, docs, retrieval_score=retrieval_score)
+        # 生成（传入检索分数和核心问题用于置信度判断和对齐检查）
+        answer, gen_debug = self.generator.generate(
+            question, docs, 
+            retrieval_score=retrieval_score,
+            core_query=core_query
+        )
         
         if verbose:
             print(f"\n💬 答案: {answer[:200]}...")

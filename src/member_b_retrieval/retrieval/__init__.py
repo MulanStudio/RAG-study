@@ -58,6 +58,96 @@ class RAGRetriever:
         # 初始化子模块
         self.query_decomposer = QueryDecomposer(llm)
         self.hyde_retriever = HyDERetriever(llm, vectorstore, reranker=None) if llm else None
+        
+        # 噪音指示词列表（用于快速判断是否需要核心问题提取）
+        self._noise_indicators = [
+            "你好", "您好", "hello", "hi", "hey",
+            "请问", "谢谢", "thanks", "thank you", "please",
+            "我是", "我叫", "i'm", "i am", "my name",
+            "我想", "想问", "想了解", "我想问", "想请教",
+            "麻烦", "打扰", "帮我", "帮忙",
+            "关于那个", "就是那个", "嗯",
+        ]
+    
+    def _needs_core_extraction(self, query: str) -> bool:
+        """
+        快速判断是否需要提取核心问题（避免对干净查询做无用的 LLM 调用）
+        """
+        # 太短的问题不需要（可能本身就是核心问题）
+        if len(query.strip()) < 15:
+            return False
+        
+        # 检查是否包含噪音指示词
+        q_lower = query.lower()
+        return any(indicator in q_lower for indicator in self._noise_indicators)
+    
+    def _extract_core_question(self, query: str) -> str:
+        """
+        使用 LLM 提取问题的核心部分，过滤寒暄、背景、废话等无关内容。
+        这是通用方法，不依赖 hardcode 规则。
+        
+        Examples:
+            "你好，slb的2023年营收是多少？" → "SLB的2023年营收是多少？"
+            "Hi, I'm John, what's the Q3 revenue?" → "What is the Q3 revenue?"
+        """
+        if not self.llm:
+            return query
+        
+        # 智能跳过：干净的查询不需要提取
+        if not self._needs_core_extraction(query):
+            return query
+        
+        # 获取 prompt（优先从配置读取）
+        prompts_cfg = self.config.get("prompts", {})
+        prompt_template = prompts_cfg.get("core_question_extraction", """Extract the core question from the user input.
+Remove all greetings, self-introductions, background info, politeness phrases, and irrelevant content.
+Keep ONLY the actual question the user wants answered.
+Output ONLY the core question in the SAME LANGUAGE as the original question.
+If the input is already a pure question, return it as-is.
+
+User input: {query}
+
+Core question:""")
+        
+        prompt = prompt_template.format(query=query)
+        
+        try:
+            response = self.llm.invoke(prompt).content.strip()
+            # 确保返回的不是空的，且比原查询短（说明确实提取了）
+            if response and len(response) >= 3:
+                logger.debug(f"Core question extracted: '{query}' -> '{response}'")
+                return response
+            return query
+        except Exception as e:
+            logger.warning(f"Core question extraction failed: {e}")
+            return query
+    
+    def _validate_retrieval_relevance(self, core_query: str, docs: List[Document]) -> bool:
+        """
+        验证检索结果是否与核心问题相关（基于实体匹配）
+        """
+        if not docs:
+            return False
+        
+        # 提取核心问题中的实体
+        entities = self._extract_entities(core_query)
+        
+        # 提取关键词
+        from src.member_b_retrieval.text_processing import extract_key_terms
+        key_terms = extract_key_terms(core_query)
+        
+        if not entities and not key_terms:
+            return True  # 无法判断，认为相关
+        
+        # 检查前 3 个文档是否包含任意实体或关键词
+        for doc in docs[:3]:
+            content_lower = doc.page_content.lower()
+            if entities and any(ent.lower() in content_lower for ent in entities):
+                return True
+            if key_terms and any(term in content_lower for term in key_terms):
+                return True
+        
+        return False
     
     def _expand_query(self, query: str) -> List[str]:
         """
@@ -120,23 +210,30 @@ Alternative 2"""
         """
         from src.member_b_retrieval.text_processing import normalize_query
         debug_info = {"original_query": query}
-        normalized_query = normalize_query(query)
+        
+        # Step 0: 核心问题提取（过滤寒暄、背景、废话）
+        core_query = self._extract_core_question(query)
+        debug_info["core_query"] = core_query
+        debug_info["core_extraction_applied"] = (core_query != query)
+        
+        # 后续使用 core_query 而不是原始 query
+        normalized_query = normalize_query(core_query)
         debug_info["normalized_query"] = normalized_query
         
-        # Step 0: 查询扩展（可选）- 生成替代表述
+        # Step 0.5: 查询扩展（可选）- 生成替代表述（使用核心问题）
         if use_expansion and self.llm:
-            expanded_queries = self._expand_query(query)
+            expanded_queries = self._expand_query(core_query)
             debug_info["expanded_queries"] = expanded_queries
         else:
-            expanded_queries = [query]
+            expanded_queries = [core_query]
         
-        # Step 1: 问题分解（可选）
+        # Step 1: 问题分解（可选）（使用核心问题）
         if use_decomposition and self.llm:
-            decomposition = self.query_decomposer.decompose(query)
+            decomposition = self.query_decomposer.decompose(core_query)
             sub_queries = decomposition["sub_queries"]
             debug_info["decomposition"] = decomposition
         else:
-            sub_queries = [normalized_query or query]
+            sub_queries = [normalized_query or core_query]
         
         # 合并扩展查询和分解查询
         all_queries = list(set(sub_queries + expanded_queries[1:]))  # 去重
@@ -183,20 +280,27 @@ Alternative 2"""
         
         debug_info["rrf_fusion"] = f"Merged {len(all_rankings)} rankings"
         
-        # Step 4: 类型覆盖保底
-        candidate_docs = self._ensure_type_coverage(query, candidate_docs)
+        # Step 4: 类型覆盖保底（使用 core_query）
+        candidate_docs = self._ensure_type_coverage(core_query, candidate_docs)
+        
+        # Step 4.5: 检索相关性验证
+        if not self._validate_retrieval_relevance(core_query, candidate_docs):
+            logger.warning(f"Retrieval may not be relevant to core query: {core_query}")
+            debug_info["retrieval_validation"] = "low_relevance"
+        else:
+            debug_info["retrieval_validation"] = "ok"
         
         # Step 5: Parent Document 还原
         parent_docs = self._restore_parents(candidate_docs)
         
-        # Step 6: Reranker 精排
+        # Step 6: Reranker 精排（使用 core_query）
         if self.reranker and parent_docs:
-            final_docs = self._rerank(query, parent_docs, top_k)
+            final_docs = self._rerank(core_query, parent_docs, top_k)
         else:
             final_docs = parent_docs[:top_k]
         
-        # Step 7: 实体类问题保底（如公司营收）
-        final_docs = self._ensure_entity_record_in_top(query, final_docs, top_k)
+        # Step 7: 实体类问题保底（使用 core_query）
+        final_docs = self._ensure_entity_record_in_top(core_query, final_docs, top_k)
         
         # 计算平均相似度分数
         avg_score = sum(all_scores) / len(all_scores) if all_scores else 0.0
