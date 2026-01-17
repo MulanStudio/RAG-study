@@ -34,9 +34,13 @@ models:
     base_url: "http://127.0.0.1:11434"
   
   # Embedding 模型
+  # 可选 provider: "azure_openai", "huggingface", "huggingface_local"
   embedding:
     provider: "azure_openai"
     model_name: "text-embedding-3-large"
+    # 本地 GPU 模型配置（provider: "huggingface_local" 时使用）
+    # model_name: "BAAI/bge-large-en-v1.5"
+    # device: "cuda"  # 或 "cpu"
 
   # Azure OpenAI 配置
   azure_openai:
@@ -55,11 +59,18 @@ models:
 # 📑 文档处理配置
 # -----------------------------------------------------
 indexing:
-  # Parent-Child 分块策略
+  # Parent-Child 分块策略（默认配置）
   chunk_size_parent: 2000    # 父块大小（用于生成）
   chunk_overlap_parent: 200
   chunk_size_child: 400      # 子块大小（用于检索）
   chunk_overlap_child: 50
+
+# 比赛优化配置（大数据量时使用，减少 chunk 数量）
+indexing_competition:
+  chunk_size_parent: 3000
+  chunk_overlap_parent: 300
+  chunk_size_child: 600
+  chunk_overlap_child: 80
 
 # -----------------------------------------------------
 # 🔍 检索配置
@@ -115,7 +126,7 @@ prompts:
     Context: {context}
     Is the answer fully supported by the context? Answer only 'yes' or 'no'.
 
-  # 最终回答生成
+  # 最终回答生成（带 Few-Shot 示例）
   generation: |
     You are a Senior Technical Expert in the Oil & Gas industry.
     Answer the user's question directly and accurately based on the Context provided.
@@ -127,6 +138,20 @@ prompts:
        - English: "I don't know."
        - 中文: "不知道。"
     4. Keep your answer concise and direct.
+    5. For numerical values, include units (e.g., "33.1 Billion USD", "18%", "1500 m").
+    
+    EXAMPLES:
+    Q: What is SLB's 2023 revenue?
+    A: SLB: 33.1 Billion USD
+    
+    Q: Which region has the highest Q3 2024 revenue?
+    A: Middle East: 850.5 Million USD
+    
+    Q: What is the average porosity of Zone_A?
+    A: 18%
+    
+    Q: 中海油2023年净利润是多少？
+    A: 121.6 亿美元
     
     Context:
     {context}

@@ -183,15 +183,54 @@ prompts:
 
 ---
 
+## 🚀 比赛优化（300MB 大数据量）
+
+### 预构建索引（推荐！）
+
+比赛前一晚运行，提前构建索引：
+
+```bash
+python scripts/prebuild_index.py --data_dir competition_data/
+```
+
+比赛当天启动 **秒开**（从缓存加载）！
+
+### 性能配置
+
+| 配置项 | 说明 | 效果 |
+|--------|------|------|
+| `system.vector_db.persist_dir` | 向量索引缓存目录 | 二次启动 < 5 秒 |
+| `system.vector_db.force_rebuild` | 强制重建索引 | 数据变化时设为 true |
+| `embedding.provider: "huggingface_local"` | 本地 GPU embedding | 不受 API 限制 |
+| `indexing_competition` | 大 chunk 配置 | 减少 40% chunk 数量 |
+
+### 本地 Embedding 模型（无 API 限制）
+
+```yaml
+# config/config.yaml
+models:
+  embedding:
+    provider: "huggingface_local"
+    model_name: "BAAI/bge-large-en-v1.5"
+    device: "cuda"  # 或 "cpu"
+```
+
+---
+
 ## 🔧 核心优化
 
 | 优化项 | 说明 | 效果 |
 |--------|------|------|
+| **向量索引持久化** | 首次构建后缓存到磁盘 | 二次启动 < 5 秒 |
+| **并行 Embedding** | 多线程批量处理 | 构建速度 3-5x |
+| **API 自动重试** | 指数退避重试 | 稳定性提升 |
+| **查询扩展** | LLM 生成替代表述 | 召回率提升 |
 | **Query Decomposition** | 复杂问题拆分为子问题 | 提高复杂问题覆盖率 |
 | **HyDE** | 生成假设文档后检索 | 提高语义匹配准确度 |
 | **RRF 融合** | 多路召回按排名融合 | 综合多种检索优势 |
 | **PDF 表格提取** | 表格转结构化文本 | 精准检索表格数据 |
 | **Parent-Child 分块** | 小块检索，大块生成 | 检索精准 + 上下文完整 |
+| **二级置信度保护** | 检索分数 + LLM 判断 | 防止瞎答 |
 
 ---
 

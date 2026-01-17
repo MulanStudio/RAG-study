@@ -9,12 +9,16 @@
 3. HyDE 假设文档检索
 4. RRF 多路融合
 5. Reranker 精排
+6. Query Expansion（查询扩展）
 """
 
 import os
 import sys
+import logging
 from typing import List, Dict, Tuple, Optional
 from langchain_core.documents import Document
+
+logger = logging.getLogger(__name__)
 
 # 复用已有模块
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -55,12 +59,51 @@ class RAGRetriever:
         self.query_decomposer = QueryDecomposer(llm)
         self.hyde_retriever = HyDERetriever(llm, vectorstore, reranker=None) if llm else None
     
+    def _expand_query(self, query: str) -> List[str]:
+        """
+        使用 LLM 生成查询的替代表述，提高召回率
+        
+        Args:
+            query: 原始查询
+            
+        Returns:
+            [原始查询, 替代表述1, 替代表述2, ...]
+        """
+        if not self.llm:
+            return [query]
+        
+        prompt = f"""Generate 2 alternative phrasings for this question to improve search retrieval.
+Keep the same meaning but use different words or structure.
+
+Original question: {query}
+
+Output format (one per line, no numbering):
+Alternative 1
+Alternative 2"""
+        
+        try:
+            response = self.llm.invoke(prompt).content.strip()
+            alternatives = [line.strip() for line in response.split('\n') if line.strip()]
+            # 去掉可能的编号前缀
+            cleaned = []
+            for alt in alternatives[:2]:  # 最多取2个
+                # 去除 "1." "2." "Alternative 1:" 等前缀
+                import re
+                alt = re.sub(r'^(Alternative\s*\d*[:.]?\s*|\d+[.:]\s*)', '', alt, flags=re.IGNORECASE)
+                if alt and alt.lower() != query.lower():
+                    cleaned.append(alt)
+            return [query] + cleaned
+        except Exception as e:
+            logger.warning(f"Query expansion failed: {e}")
+            return [query]
+    
     def retrieve(
         self,
         query: str,
         top_k: int = 5,
         use_decomposition: bool = True,
-        use_hyde: bool = True
+        use_hyde: bool = True,
+        use_expansion: bool = True
     ) -> Tuple[List[Document], Dict]:
         """
         执行检索
@@ -70,6 +113,7 @@ class RAGRetriever:
             top_k: 返回文档数量
             use_decomposition: 是否使用问题分解
             use_hyde: 是否使用 HyDE
+            use_expansion: 是否使用查询扩展
         
         Returns:
             (documents, debug_info)
@@ -79,6 +123,13 @@ class RAGRetriever:
         normalized_query = normalize_query(query)
         debug_info["normalized_query"] = normalized_query
         
+        # Step 0: 查询扩展（可选）- 生成替代表述
+        if use_expansion and self.llm:
+            expanded_queries = self._expand_query(query)
+            debug_info["expanded_queries"] = expanded_queries
+        else:
+            expanded_queries = [query]
+        
         # Step 1: 问题分解（可选）
         if use_decomposition and self.llm:
             decomposition = self.query_decomposer.decompose(query)
@@ -87,11 +138,15 @@ class RAGRetriever:
         else:
             sub_queries = [normalized_query or query]
         
-        # Step 2: 对每个子问题检索
+        # 合并扩展查询和分解查询
+        all_queries = list(set(sub_queries + expanded_queries[1:]))  # 去重
+        debug_info["all_search_queries"] = all_queries
+        
+        # Step 2: 对每个查询（原始 + 扩展 + 分解）检索
         all_rankings = []
         
         all_scores = []
-        for sub_q in sub_queries:
+        for sub_q in all_queries:
             sub_q = normalize_query(sub_q) or sub_q
             intent = self._detect_query_intent(sub_q)
             # 2.1 分组向量检索
@@ -202,8 +257,8 @@ class RAGRetriever:
                         similarity = max(0, 1 - score) if score <= 1 else 1 / (1 + score)
                         scores.append(similarity)
                         seen.add(doc.page_content)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Vector search failed for type '{f.get('type')}': {e}")
         
         return docs, scores
 

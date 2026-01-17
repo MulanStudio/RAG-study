@@ -12,8 +12,11 @@
 
 import os
 import yaml
+import logging
 from typing import List, Dict, Tuple, Optional
 from langchain_core.documents import Document
+
+logger = logging.getLogger(__name__)
 
 
 class PromptManager:
@@ -140,7 +143,8 @@ class CRAGModule:
                 response = self.llm.invoke(prompt).content.strip().lower()
                 if "yes" in response:
                     relevant.append(doc)
-            except:
+            except Exception as e:
+                logger.debug(f"Document grading failed: {e}")
                 relevant.append(doc)  # 出错时保留
         
         # 如果少于一半相关，需要重写
@@ -158,7 +162,8 @@ class CRAGModule:
         try:
             response = self.llm.invoke(prompt).content.strip()
             return response
-        except:
+        except Exception as e:
+            logger.warning(f"Query rewrite failed: {e}")
             return query
 
 
@@ -419,35 +424,90 @@ class AnswerGenerator:
                 return v, k
         return None
 
+    def _standardize_number(self, value: str, decimals: int = 2) -> str:
+        """标准化数值格式（统一小数位数）"""
+        import re
+        # 提取数值部分
+        match = re.search(r"(-?\d+(?:\.\d+)?)", value)
+        if not match:
+            return value
+        
+        num_str = match.group(1)
+        try:
+            num = float(num_str)
+            # 整数不加小数点
+            if num == int(num) and decimals == 0:
+                formatted = str(int(num))
+            else:
+                formatted = f"{num:.{decimals}f}"
+            # 替换原始数值
+            return value.replace(num_str, formatted, 1)
+        except ValueError:
+            return value
+    
     def _format_value_with_unit(self, value: str, key: str) -> str:
-        """根据字段名补充单位"""
+        """根据字段名补充单位，并标准化格式"""
         import re
         if not value:
             return value
-        if re.search(r"[a-zA-Z%]", value):
-            return value
+        
+        # 如果已有单位，只做格式化
+        has_unit = bool(re.search(r"[a-zA-Z%]", value))
+        
         key_lower = (key or "").lower()
-        if "billion" in key_lower and "usd" in key_lower:
-            return f"{value} Billion USD"
-        if ("million" in key_lower or "m_usd" in key_lower or "m usd" in key_lower) and "usd" in key_lower:
-            return f"{value} Million USD"
-        if "usd" in key_lower:
-            return f"{value} USD"
-        if "revenue" in key_lower:
-            return f"{value} Billion USD"
-        if "arr" in key_lower or "cash flow" in key_lower or "free_cash_flow" in key_lower:
-            return f"{value} Million USD"
-        if "profit" in key_lower or "income" in key_lower or "ebitda" in key_lower:
-            return f"{value} Billion USD"
-        if "margin" in key_lower or "rate" in key_lower or "porosity" in key_lower or "saturation" in key_lower:
-            return f"{value}%"
-        if "depth" in key_lower or key_lower.endswith("_m"):
-            return f"{value} m"
-        if "permeability" in key_lower:
-            return f"{value} mD"
-        if "employees" in key_lower:
-            return f"{value} employees"
-        return value
+        
+        # 确定单位和小数位数
+        unit = ""
+        decimals = 2  # 默认2位小数
+        
+        if "billion" in key_lower or ("revenue" in key_lower and "m" not in key_lower):
+            unit = " Billion USD"
+            decimals = 1
+        elif "million" in key_lower or "m_usd" in key_lower or "m usd" in key_lower:
+            unit = " Million USD"
+            decimals = 1
+        elif "arr" in key_lower or "cash flow" in key_lower or "free_cash_flow" in key_lower:
+            unit = " Million USD"
+            decimals = 1
+        elif "profit" in key_lower or "income" in key_lower or "ebitda" in key_lower:
+            unit = " Billion USD"
+            decimals = 1
+        elif "usd" in key_lower:
+            unit = " USD"
+            decimals = 2
+        elif "margin" in key_lower or "rate" in key_lower or "churn" in key_lower:
+            unit = "%"
+            decimals = 1
+        elif "porosity" in key_lower or "saturation" in key_lower:
+            unit = "%"
+            decimals = 1
+        elif "depth" in key_lower or key_lower.endswith("_m") or "thickness" in key_lower:
+            unit = " m"
+            decimals = 1
+        elif "permeability" in key_lower:
+            unit = " mD"
+            decimals = 1
+        elif "employees" in key_lower or "headcount" in key_lower:
+            unit = " employees"
+            decimals = 0
+        elif "growth" in key_lower:
+            unit = "%"
+            decimals = 1
+        elif "price" in key_lower:
+            unit = " USD"
+            decimals = 2
+        elif "volume" in key_lower or "production" in key_lower:
+            unit = " bbl"
+            decimals = 0
+        
+        # 标准化数值
+        result = self._standardize_number(value, decimals)
+        
+        # 添加单位（如果还没有）
+        if unit and not has_unit:
+            result = result + unit
+        
+        return result
 
     def _get_best_record(
         self,

@@ -18,10 +18,18 @@ import sys
 import argparse
 import uuid
 import yaml
+import logging
 from typing import List, Dict
 
 # 设置环境
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # 添加路径
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -224,15 +232,19 @@ class OilfieldRAG:
         
         return child_docs, docstore
     
-    def _build_vectorstore(self, docs: List):
-        """构建向量数据库"""
-        from langchain_chroma import Chroma
+    def _compute_data_fingerprint(self, docs: List) -> str:
+        """计算数据指纹，用于判断是否需要重建索引"""
+        import hashlib
+        # 使用文档数量 + 前100个文档的前100字符作为指纹
+        fingerprint_data = f"{len(docs)}:"
+        for doc in docs[:100]:
+            fingerprint_data += doc.page_content[:100]
+        return hashlib.md5(fingerprint_data.encode()).hexdigest()[:16]
+    
+    def _get_embeddings(self):
+        """获取 embedding 模型实例"""
         emb_cfg = self.config["models"]["embedding"]
         provider = emb_cfg.get("provider", "huggingface")
-        
-        # 过滤空内容，避免 embedding 报错
-        docs = [doc for doc in docs if doc.page_content and doc.page_content.strip()]
-        print(f"   📦 向量构建输入文档数: {len(docs)}")
         
         if provider == "azure_openai":
             from src.member_e_system.azure_openai_client import (
@@ -245,18 +257,82 @@ class OilfieldRAG:
                 azure_cfg["team_domain"],
                 azure_cfg["api_key"]
             )
-            embeddings = AzureOpenAIEmbeddings(client, azure_cfg["embedding_model"])
+            return AzureOpenAIEmbeddings(client, azure_cfg["embedding_model"])
+        elif provider == "huggingface_local":
+            # 本地 GPU 加速模型
+            from langchain_huggingface import HuggingFaceEmbeddings
+            model_name = emb_cfg.get("model_name", "BAAI/bge-large-en-v1.5")
+            device = emb_cfg.get("device", "cuda")
+            return HuggingFaceEmbeddings(
+                model_name=model_name,
+                model_kwargs={'device': device},
+                encode_kwargs={'batch_size': 256, 'normalize_embeddings': True}
+            )
         else:
             from langchain_huggingface import HuggingFaceEmbeddings
             model_name = emb_cfg["model_name"]
-            embeddings = HuggingFaceEmbeddings(model_name=model_name)
-        
+            return HuggingFaceEmbeddings(model_name=model_name)
+    
+    def _build_vectorstore(self, docs: List):
+        """构建向量数据库（支持持久化缓存）"""
+        from langchain_chroma import Chroma
         import time
+        
+        # 过滤空内容，避免 embedding 报错
+        docs = [doc for doc in docs if doc.page_content and doc.page_content.strip()]
+        print(f"   📦 向量构建输入文档数: {len(docs)}")
+        
+        # 获取持久化配置
+        sys_cfg = self.config.get("system", {}).get("vector_db", {})
+        persist_dir = sys_cfg.get("persist_dir", ".cache/chroma_db")
+        force_rebuild = sys_cfg.get("force_rebuild", False)
+        
+        # 计算数据指纹
+        data_fingerprint = self._compute_data_fingerprint(docs)
+        hash_file = os.path.join(persist_dir, "data_fingerprint.txt")
+        
+        # 获取 embedding 模型
+        embeddings = self._get_embeddings()
+        
+        # 检查是否可以从缓存加载
+        if os.path.exists(persist_dir) and not force_rebuild:
+            if os.path.exists(hash_file):
+                with open(hash_file, 'r') as f:
+                    cached_fingerprint = f.read().strip()
+                if cached_fingerprint == data_fingerprint:
+                    print("   💾 从缓存加载向量索引...")
+                    start = time.time()
+                    vectorstore = Chroma(
+                        persist_directory=persist_dir,
+                        embedding_function=embeddings
+                    )
+                    elapsed = time.time() - start
+                    print(f"   ✅ 缓存加载完成，用时 {elapsed:.1f}s")
+                    return vectorstore
+                else:
+                    print("   🔄 数据已变化，重建索引...")
+            else:
+                print("   🔄 缓存无指纹文件，重建索引...")
+        
+        # 重新构建索引
         start = time.time()
         print("   ⏱️ 开始构建 Chroma 向量索引...")
-        vectorstore = Chroma.from_documents(documents=docs, embedding=embeddings)
+        
+        # 确保目录存在
+        os.makedirs(persist_dir, exist_ok=True)
+        
+        vectorstore = Chroma.from_documents(
+            documents=docs,
+            embedding=embeddings,
+            persist_directory=persist_dir
+        )
+        
+        # 保存数据指纹
+        with open(hash_file, 'w') as f:
+            f.write(data_fingerprint)
+        
         elapsed = time.time() - start
-        print(f"   ✅ 向量索引完成，用时 {elapsed:.1f}s")
+        print(f"   ✅ 向量索引完成并持久化，用时 {elapsed:.1f}s")
         return vectorstore
     
     def _build_bm25(self, docs: List):
@@ -320,8 +396,8 @@ class OilfieldRAG:
             vlm.invoke("hi")
             print(f"   ✅ VLM 可用: {cfg['model_name']}")
             return vlm
-        except:
-            print("   ⚠️ VLM 不可用，图片将使用文件名作为描述")
+        except Exception as e:
+            print(f"   ⚠️ VLM 不可用，图片将使用文件名作为描述 ({type(e).__name__})")
             return None
 
 
