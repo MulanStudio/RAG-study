@@ -202,6 +202,30 @@ class AnswerGenerator:
         except Exception:
             return True
 
+    def _llm_confidence_check(self, query: str, context: str) -> float:
+        """
+        使用 LLM 判断上下文能否回答问题，返回置信度分数 (0.0-1.0)。
+        """
+        if not self.llm:
+            return 1.0  # 无 LLM 时放行
+        
+        prompt = self.prompts.format(
+            "confidence_check",
+            context=context[:3000],
+            query=query
+        )
+        try:
+            response = self.llm.invoke(prompt).content.strip()
+            # 提取数字
+            import re
+            match = re.search(r"(\d+\.?\d*)", response)
+            if match:
+                score = float(match.group(1))
+                return min(1.0, max(0.0, score))
+            return 0.5  # 无法解析时默认中等置信度
+        except Exception:
+            return 1.0  # 出错时放行
+
     def _covers_key_items(self, query: str, answer: str) -> bool:
         """检查答案是否覆盖问题中的关键项（轻量规则）"""
         from src.member_b_retrieval.text_processing import tokenize_text, normalize_query, extract_key_terms
@@ -726,7 +750,8 @@ class AnswerGenerator:
         self,
         query: str,
         documents: List[Document],
-        use_crag: bool = True
+        use_crag: bool = True,
+        retrieval_score: float = 1.0
     ) -> Tuple[str, Dict]:
         """
         生成答案
@@ -735,17 +760,39 @@ class AnswerGenerator:
             query: 用户问题
             documents: 检索到的文档
             use_crag: 是否使用 CRAG 自我修正
+            retrieval_score: 检索相似度分数 (0.0-1.0)
         
         Returns:
             (answer, debug_info)
         """
-        debug_info = {}
+        debug_info = {"retrieval_score": retrieval_score}
         
         if not self.llm:
             return "LLM 不可用", debug_info
         
         if not documents:
             return self._refusal_message(query), debug_info
+        
+        # ============ 二级置信度保护 ============
+        # 所有问题都经过 LLM 置信度判断，根据检索分数调整阈值
+        context_preview = "\n\n".join([doc.page_content for doc in documents[:5]])
+        llm_confidence = self._llm_confidence_check(query, context_preview)
+        debug_info["llm_confidence"] = llm_confidence
+        debug_info["retrieval_score"] = retrieval_score
+        
+        # 动态阈值：检索分数高时用更宽松的置信度阈值
+        if retrieval_score >= 0.3:
+            confidence_threshold = 0.2  # 高检索分数，宽松阈值
+        elif retrieval_score >= 0.15:
+            confidence_threshold = 0.4  # 中等检索分数
+        else:
+            confidence_threshold = 0.6  # 低检索分数，严格阈值
+        
+        debug_info["confidence_threshold"] = confidence_threshold
+        if llm_confidence < confidence_threshold:
+            debug_info["confidence_guard"] = f"llm_confidence_too_low ({llm_confidence:.2f} < {confidence_threshold})"
+            return self._refusal_message(query), debug_info
+        # ============ 二级保护结束 ============
         
         final_docs = documents
         

@@ -51,13 +51,20 @@ class AzureOpenAIEmbeddings:
             cleaned.append(t)
         embeddings = []
         batch_size = 64
+        import time
+        start_all = time.time()
         for i in range(0, len(cleaned), batch_size):
             batch = cleaned[i:i + batch_size]
+            start = time.time()
             response = self.client.embeddings.create(
                 input=batch,
                 model=self.model
             )
             embeddings.extend([item.embedding for item in response.data])
+            elapsed = time.time() - start
+            print(f"   🧩 Embedding batch {i//batch_size + 1}: {len(batch)} docs, {elapsed:.1f}s")
+        total = time.time() - start_all
+        print(f"   ✅ Embeddings complete: {len(cleaned)} docs, {total:.1f}s")
         return embeddings
 
     def embed_query(self, text: str) -> List[float]:

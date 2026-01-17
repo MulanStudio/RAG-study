@@ -172,14 +172,15 @@ class OilfieldRAG:
         
         # 检索
         docs, retrieval_debug = self.retriever.retrieve(question, top_k=5)
+        retrieval_score = retrieval_debug.get("max_similarity_score", 1.0)
         
         if verbose:
-            print(f"📚 检索到 {len(docs)} 个文档")
+            print(f"📚 检索到 {len(docs)} 个文档 (相似度: {retrieval_score:.2f})")
             for i, doc in enumerate(docs[:3], 1):
                 print(f"   {i}. {doc.page_content[:80]}...")
         
-        # 生成
-        answer, gen_debug = self.generator.generate(question, docs)
+        # 生成（传入检索分数用于置信度判断）
+        answer, gen_debug = self.generator.generate(question, docs, retrieval_score=retrieval_score)
         
         if verbose:
             print(f"\n💬 答案: {answer[:200]}...")
@@ -231,6 +232,7 @@ class OilfieldRAG:
         
         # 过滤空内容，避免 embedding 报错
         docs = [doc for doc in docs if doc.page_content and doc.page_content.strip()]
+        print(f"   📦 向量构建输入文档数: {len(docs)}")
         
         if provider == "azure_openai":
             from src.member_e_system.azure_openai_client import (
@@ -249,7 +251,13 @@ class OilfieldRAG:
             model_name = emb_cfg["model_name"]
             embeddings = HuggingFaceEmbeddings(model_name=model_name)
         
-        return Chroma.from_documents(documents=docs, embedding=embeddings)
+        import time
+        start = time.time()
+        print("   ⏱️ 开始构建 Chroma 向量索引...")
+        vectorstore = Chroma.from_documents(documents=docs, embedding=embeddings)
+        elapsed = time.time() - start
+        print(f"   ✅ 向量索引完成，用时 {elapsed:.1f}s")
+        return vectorstore
     
     def _build_bm25(self, docs: List):
         """构建 BM25 索引"""

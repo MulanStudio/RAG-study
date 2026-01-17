@@ -90,13 +90,15 @@ class RAGRetriever:
         # Step 2: 对每个子问题检索
         all_rankings = []
         
+        all_scores = []
         for sub_q in sub_queries:
             sub_q = normalize_query(sub_q) or sub_q
             intent = self._detect_query_intent(sub_q)
             # 2.1 分组向量检索
-            vector_docs = self._grouped_vector_search(sub_q, intent=intent)
+            vector_docs, vector_scores = self._grouped_vector_search(sub_q, intent=intent)
             if vector_docs:
                 all_rankings.append((vector_docs, 1.0, "vector"))
+                all_scores.extend(vector_scores)
             
             # 2.2 BM25 检索
             bm25_docs = self._bm25_search(sub_q)
@@ -141,6 +143,11 @@ class RAGRetriever:
         # Step 7: 实体类问题保底（如公司营收）
         final_docs = self._ensure_entity_record_in_top(query, final_docs, top_k)
         
+        # 计算平均相似度分数
+        avg_score = sum(all_scores) / len(all_scores) if all_scores else 0.0
+        debug_info["avg_similarity_score"] = avg_score
+        debug_info["max_similarity_score"] = max(all_scores) if all_scores else 0.0
+        
         return final_docs, debug_info
 
     def _ensure_entity_record_in_top(self, query: str, docs: List[Document], top_k: int) -> List[Document]:
@@ -161,9 +168,10 @@ class RAGRetriever:
                     break
         return docs[:top_k]
     
-    def _grouped_vector_search(self, query: str, intent: str = "general") -> List[Document]:
-        """分组向量检索"""
+    def _grouped_vector_search(self, query: str, intent: str = "general") -> Tuple[List[Document], List[float]]:
+        """分组向量检索，返回文档和相似度分数"""
         docs = []
+        scores = []
         seen = set()
         cfg = self.config.get("retrieval", {})
         boost = 2 if intent in ["finance", "calc"] else 1
@@ -184,16 +192,20 @@ class RAGRetriever:
                 if f["type"]:
                     kwargs["filter"] = {"type": f["type"]}
                 
-                results = self.vectorstore.similarity_search(query, **kwargs)
+                # 使用 similarity_search_with_score 获取分数
+                results = self.vectorstore.similarity_search_with_score(query, **kwargs)
                 
-                for doc in results:
+                for doc, score in results:
                     if doc.page_content not in seen:
                         docs.append(doc)
+                        # Chroma 返回的是距离，越小越好，转换为相似度（1 - distance）
+                        similarity = max(0, 1 - score) if score <= 1 else 1 / (1 + score)
+                        scores.append(similarity)
                         seen.add(doc.page_content)
             except:
                 pass
         
-        return docs
+        return docs, scores
 
     def _detect_query_intent(self, query: str) -> str:
         q = query.lower()

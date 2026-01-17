@@ -165,6 +165,23 @@ prompts:
     
     Answer:
 
+  # 置信度判断
+  confidence_check: |
+    Based on the following context, can you answer the question?
+    
+    Context:
+    {context}
+    
+    Question: {query}
+    
+    Instructions:
+    - Reply with ONLY a number between 0.0 and 1.0 indicating your confidence.
+    - 0.0 = The context contains NO relevant information to answer the question.
+    - 0.5 = The context contains SOME related information but not enough for a definitive answer.
+    - 1.0 = The context contains ALL necessary information to answer the question with certainty.
+    
+    Confidence (0.0-1.0):
+
 # -----------------------------------------------------
 # 📊 评测配置
 # -----------------------------------------------------
