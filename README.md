@@ -87,8 +87,7 @@ RAG-study/
 │   ├── member_c_generation/ # 成员C: 生成层
 │   │   └── generation/      # 生成核心 + LLM 答案后处理
 │   ├── member_d_evaluation/ # 成员D: 评测层
-│   │   ├── rag_eval.py      # 语义相似度评测
-│   │   └── benchmark_challenge.py
+│   │   └── rag_eval.py      # 语义相似度评测
 │   └── member_e_system/     # 成员E: 系统层
 │       ├── app.py           # 主应用入口
 │       ├── batch_answer_excel.py

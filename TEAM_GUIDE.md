@@ -193,8 +193,7 @@ answer, debug_info = generator.generate(query, documents, retrieval_score=0.5)
 ### 负责模块
 ```
 src/member_d_evaluation/
-├── rag_eval.py             # 问题+标准答案+提交答案评分 + 🆕 语义相似度
-└── benchmark_challenge.py  # 历史评测脚本
+└── rag_eval.py             # 问题+标准答案+提交答案评分 + 语义相似度
 ```
 
 ### 核心任务

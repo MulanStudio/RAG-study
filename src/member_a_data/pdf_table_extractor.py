@@ -230,11 +230,11 @@ def load_pdfs_with_table_extraction(directory: str) -> List[Document]:
     可以直接替换原有的 PDF 加载逻辑：
     
     旧代码:
-        pdf_loader = DirectoryLoader("downloads", glob="**/*.pdf", loader_cls=PyPDFLoader)
+        pdf_loader = DirectoryLoader("data", glob="**/*.pdf", loader_cls=PyPDFLoader)
         docs.extend(pdf_loader.load())
     
     新代码:
-        docs.extend(load_pdfs_with_table_extraction("downloads"))
+        docs.extend(load_pdfs_with_table_extraction("data"))
     """
     import glob
     
@@ -310,7 +310,7 @@ def test_pdf_extraction():
         return True
     
     # 尝试加载测试 PDF
-    test_pdf = "downloads/China_Oilfield_Services_Annual_Report.pdf"
+    test_pdf = "data/China_Oilfield_Services_Annual_Report.pdf"
     if os.path.exists(test_pdf):
         docs = extractor.load_pdf_with_tables(test_pdf)
         print(f"\n📄 Loaded {len(docs)} documents from {test_pdf}")

@@ -46,8 +46,8 @@ data/
 
 ```bash
 # 运行系统
-python app.py
+python src/member_e_system/app.py
 
-# 或启动 Web UI
-streamlit run streamlit_app.py
+# 或直接提问
+python src/member_e_system/app.py --question "你的问题"
 ```

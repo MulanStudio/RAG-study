@@ -486,12 +486,11 @@ def run_cli(rag: OilfieldRAG):
 
 
 def run_web(rag: OilfieldRAG):
-    """启动 Web UI"""
-    print("\n🌐 启动 Web UI...")
-    print("   请访问: http://localhost:8501")
-    
-    # 使用原有的 streamlit_app
-    os.system("streamlit run streamlit_app.py")
+    """启动 Web UI（已弃用）"""
+    print("\n⚠️ Web UI 模式已弃用")
+    print("   请使用命令行模式: python src/member_e_system/app.py --question '你的问题'")
+    print("   或交互模式: python src/member_e_system/app.py")
+    sys.exit(1)
 
 
 def main():
