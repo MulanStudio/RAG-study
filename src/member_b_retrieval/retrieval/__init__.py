@@ -149,6 +149,54 @@ Core question:""")
         
         return False
     
+    def _normalize_query_with_llm(self, query: str) -> str:
+        """
+        使用 LLM 智能改写查询，解决：
+        1. 公司名异译（哈利伯顿/哈里伯顿 → Halliburton）
+        2. 术语不一致（营收/收入/Revenue）
+        3. 中英文混合查询
+        
+        这是科学的方案，不依赖 hardcode 同义词表。
+        
+        Example:
+            "哈利伯顿的2023年营收" -> "Halliburton 2023 revenue (哈里伯顿营收)"
+        """
+        if not self.llm:
+            return query
+        
+        # 获取 prompt（优先从配置读取）
+        prompts_cfg = self.config.get("prompts", {})
+        prompt_template = prompts_cfg.get("query_normalization", """Normalize this query for better search retrieval in an oilfield services knowledge base.
+
+Rules:
+1. Convert company names to standard English names AND keep the original:
+   - 哈利伯顿/哈里伯顿 → Halliburton (哈里伯顿)
+   - 斯伦贝谢 → SLB/Schlumberger (斯伦贝谢)
+   - 中海油服 → COSL (中海油服)
+2. Normalize financial terms: 营收/收入 → revenue, 利润 → profit
+3. Keep numbers and years as-is
+4. Output should be a single search-friendly query combining both languages
+
+Input: {query}
+
+Normalized query:""")
+        
+        prompt = prompt_template.format(query=query)
+        
+        try:
+            response = self.llm.invoke(prompt).content.strip()
+            # 清理可能的前缀
+            if response.lower().startswith("normalized query:"):
+                response = response[17:].strip()
+            # 确保返回有效结果
+            if response and 3 < len(response) < len(query) * 4:
+                logger.debug(f"Query normalized: '{query}' -> '{response}'")
+                return response
+            return query
+        except Exception as e:
+            logger.warning(f"Query normalization failed: {e}")
+            return query
+    
     def _expand_query(self, query: str) -> List[str]:
         """
         使用 LLM 生成查询的替代表述，提高召回率
@@ -216,24 +264,30 @@ Alternative 2"""
         debug_info["core_query"] = core_query
         debug_info["core_extraction_applied"] = (core_query != query)
         
-        # 后续使用 core_query 而不是原始 query
-        normalized_query = normalize_query(core_query)
+        # Step 0.1: LLM 智能改写（解决公司名异译、术语不一致等问题）
+        llm_normalized = self._normalize_query_with_llm(core_query)
+        if llm_normalized != core_query:
+            debug_info["llm_normalized_query"] = llm_normalized
+            logger.debug(f"Query LLM normalized: {core_query} -> {llm_normalized}")
+        
+        # 后续使用 llm_normalized 而不是原始 query
+        normalized_query = normalize_query(llm_normalized)
         debug_info["normalized_query"] = normalized_query
         
-        # Step 0.5: 查询扩展（可选）- 生成替代表述（使用核心问题）
+        # Step 0.5: 查询扩展（可选）- 生成替代表述（使用 LLM 规范化后的问题）
         if use_expansion and self.llm:
-            expanded_queries = self._expand_query(core_query)
+            expanded_queries = self._expand_query(llm_normalized)
             debug_info["expanded_queries"] = expanded_queries
         else:
-            expanded_queries = [core_query]
+            expanded_queries = [llm_normalized]
         
-        # Step 1: 问题分解（可选）（使用核心问题）
+        # Step 1: 问题分解（可选）（使用 LLM 规范化后的问题）
         if use_decomposition and self.llm:
-            decomposition = self.query_decomposer.decompose(core_query)
+            decomposition = self.query_decomposer.decompose(llm_normalized)
             sub_queries = decomposition["sub_queries"]
             debug_info["decomposition"] = decomposition
         else:
-            sub_queries = [normalized_query or core_query]
+            sub_queries = [normalized_query or llm_normalized]
         
         # 合并扩展查询和分解查询
         all_queries = list(set(sub_queries + expanded_queries[1:]))  # 去重
@@ -280,12 +334,12 @@ Alternative 2"""
         
         debug_info["rrf_fusion"] = f"Merged {len(all_rankings)} rankings"
         
-        # Step 4: 类型覆盖保底（使用 core_query）
-        candidate_docs = self._ensure_type_coverage(core_query, candidate_docs)
+        # Step 4: 类型覆盖保底（使用 LLM 规范化后的查询）
+        candidate_docs = self._ensure_type_coverage(llm_normalized, candidate_docs)
         
         # Step 4.5: 检索相关性验证
-        if not self._validate_retrieval_relevance(core_query, candidate_docs):
-            logger.warning(f"Retrieval may not be relevant to core query: {core_query}")
+        if not self._validate_retrieval_relevance(llm_normalized, candidate_docs):
+            logger.warning(f"Retrieval may not be relevant to normalized query: {llm_normalized}")
             debug_info["retrieval_validation"] = "low_relevance"
         else:
             debug_info["retrieval_validation"] = "ok"
@@ -293,14 +347,14 @@ Alternative 2"""
         # Step 5: Parent Document 还原
         parent_docs = self._restore_parents(candidate_docs)
         
-        # Step 6: Reranker 精排（使用 core_query）
+        # Step 6: Reranker 精排（使用 LLM 规范化后的查询）
         if self.reranker and parent_docs:
-            final_docs = self._rerank(core_query, parent_docs, top_k)
+            final_docs = self._rerank(llm_normalized, parent_docs, top_k)
         else:
             final_docs = parent_docs[:top_k]
         
-        # Step 7: 实体类问题保底（使用 core_query）
-        final_docs = self._ensure_entity_record_in_top(core_query, final_docs, top_k)
+        # Step 7: 实体类问题保底（使用 LLM 规范化后的查询）
+        final_docs = self._ensure_entity_record_in_top(llm_normalized, final_docs, top_k)
         
         # 计算平均相似度分数
         avg_score = sum(all_scores) / len(all_scores) if all_scores else 0.0

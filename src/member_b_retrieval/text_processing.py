@@ -21,6 +21,7 @@ _ABBREV_MAP = {
     "mwd": "measurement while drilling",
     "npt": "non productive time",
 }
+
 _STOPWORDS = {
     "the", "is", "are", "what", "which", "and", "of", "for", "to",
     "in", "on", "a", "an", "with", "by", "as", "was", "were", "be",

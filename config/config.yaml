@@ -20,23 +20,23 @@ data:
 # 🤖 模型配置
 # -----------------------------------------------------
 models:
-  # LLM 配置 (本地 Ollama)
+  # LLM 配置
   llm:
-    provider: "azure_openai"
-    model_name: "gpt-5-chat"
-    base_url: ""
+    provider: "azure_openai"  # 使用 Azure OpenAI
+    model_name: "gpt-5-chat"  # fallback 如果 azure_openai 配置不存在
+    base_url: "http://127.0.0.1:11434"  # Ollama fallback
     temperature: 0.1  # 低温度 = 更确定性的回答
   
   # VLM 配置 (图片理解)
   vlm:
-    enabled: true
+    enabled: false  # Azure OpenAI 不支持 VLM
     model_name: "llava"
     base_url: "http://127.0.0.1:11434"
   
   # Embedding 模型
   # 可选 provider: "azure_openai", "huggingface", "huggingface_local"
   embedding:
-    provider: "azure_openai"
+    provider: "azure_openai"  # 使用 Azure OpenAI embedding
     model_name: "text-embedding-3-large"
     # 本地 GPU 模型配置（provider: "huggingface_local" 时使用）
     # model_name: "BAAI/bge-large-en-v1.5"
@@ -44,7 +44,7 @@ models:
 
   # Azure OpenAI 配置
   azure_openai:
-    team_domain: ""  # 例如: your-team-name
+    team_domain: ""  # 从 .env 读取 TEAM_DOMAIN
     api_key_env: "AZURE_OPENAI_API_KEY"
     completion_model: "gpt-5-chat"
     completion_model_fallback: "gpt-5-mini"
@@ -207,6 +207,43 @@ prompts:
     
     Confidence (0.0-1.0):
 
+  # 答案核心提取（LLM 后处理，替代 hardcode 正则）
+  answer_extraction: |
+    Extract ONLY the direct answer from the response below.
+    
+    Remove ALL of the following:
+    - Greetings and pleasantries (你好, 很高兴, sure, certainly)
+    - Citation language (根据文档, according to, based on, 来源)
+    - Explanations and reasoning (因为, because, since, 由于)
+    - Filler words and disclaimers
+    
+    Rules:
+    - If it's a choice question, format as: "X. <option text>" (e.g., A. 沉积岩)
+    - If it's a number, include the unit (e.g., 33.1 Billion USD)
+    - If it says "don't know", output exactly: 不知道。
+    - Keep the answer language same as the original
+    
+    Raw response: {raw_answer}
+    Original question: {query}
+    
+    Direct answer only:
+
+  # 选择题格式修正（LLM 智能格式化）
+  format_choice: |
+    Given this answer and these options, output the correct choice in the exact format.
+    
+    Options:
+    {options}
+    
+    Answer: {answer}
+    
+    Output format must be exactly: "<letter>. <full option text>"
+    Example: A. 沉积岩
+    
+    Do NOT add any explanation.
+    
+    Formatted answer:
+
   # 核心问题提取（过滤寒暄、背景、废话）
   core_question_extraction: |
     Extract the core question from the user input.
@@ -234,6 +271,72 @@ prompts:
     
     Does the answer directly address the question? Reply only 'yes' or 'no'.
     Verdict:
+
+  # 查询智能改写（解决公司名异译、术语不一致等问题）
+  query_normalization: |
+    Normalize this query for better search retrieval in an oilfield services knowledge base.
+    
+    Rules:
+    1. Convert company names to standard English names AND keep Chinese equivalent:
+       - 哈利伯顿/哈里伯顿 → Halliburton (哈里伯顿)
+       - 斯伦贝谢/施伦伯杰 → SLB/Schlumberger (斯伦贝谢)
+       - 中海油服/中海油田服务 → COSL (中海油服)
+       - 贝克休斯 → Baker Hughes (贝克休斯)
+       - 威德福 → Weatherford (威德福)
+    2. Normalize financial terms with both languages:
+       - 营收/收入 → revenue (营收)
+       - 利润 → profit (利润)
+       - 员工数 → employees (员工)
+    3. Keep numbers, years, and quarters (Q1-Q4) as-is
+    4. Output a single search-friendly query combining key terms in both languages
+    
+    Input: {query}
+    
+    Normalized query:
+
+# -----------------------------------------------------
+# 📦 预处理配置（元数据清洗 & 摘要）
+# -----------------------------------------------------
+preprocessing:
+  # 元数据清洗（轻量级，推荐开启）
+  enable_metadata_cleaning: true
+  
+  # 文本块摘要（需要 LLM，可选）
+  enable_summarization: false  # 比赛时建议预先生成并缓存
+  
+  # 摘要配置
+  summarization:
+    min_length: 300         # 低于此长度的文档跳过摘要
+    max_input_length: 3000  # 输入到 LLM 的最大长度
+    prepend_summary: true   # 将摘要添加到原文开头（增强检索）
+    use_cache: true         # 使用缓存避免重复生成
+    cache_dir: ".summary_cache"
+    
+    # 按文档类型的摘要 Prompt（成员C 可调优）
+    prompts:
+      excel_record: |
+        Summarize this data record in ONE sentence.
+        Focus on: entity name, key metrics (with numbers), time period.
+        Record: {content}
+        Summary:
+      
+      pdf_table_record: |
+        Summarize this table data in ONE sentence.
+        Focus on: what data it contains, key values.
+        Table: {content}
+        Summary:
+      
+      ppt_slide: |
+        Summarize this slide in ONE sentence.
+        Focus on: main message, key data points.
+        Slide: {content}
+        Summary:
+      
+      default: |
+        Summarize this text in 2-3 sentences.
+        Focus on: main topic, key facts, important numbers.
+        Text: {content}
+        Summary:
 
 # -----------------------------------------------------
 # 📊 评测配置

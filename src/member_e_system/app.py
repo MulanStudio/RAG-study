@@ -114,6 +114,9 @@ class OilfieldRAG:
             print("❌ 未找到任何文档，请检查数据目录")
             return
         
+        # 1.5. 预处理：元数据清洗 + 摘要生成
+        docs = self._preprocess_documents(docs, verbose=verbose)
+        
         # 2. 文档切分 (Parent-Child)
         print("\n📑 Step 2: 文档切分...")
         self.splits, self.docstore = self._split_documents(docs)
@@ -201,6 +204,56 @@ class OilfieldRAG:
             print(f"\n💬 答案: {answer[:200]}...")
         
         return answer
+    
+    def _preprocess_documents(self, docs: List, verbose: bool = True) -> List:
+        """
+        预处理文档：元数据清洗 + 摘要生成
+        
+        Args:
+            docs: 原始文档列表
+            verbose: 是否打印进度
+            
+        Returns:
+            预处理后的文档列表
+        """
+        preprocess_cfg = self.config.get("preprocessing", {})
+        
+        # 1. 元数据清洗
+        if preprocess_cfg.get("enable_metadata_cleaning", True):
+            print("\n🧹 Step 1.5a: 元数据清洗...")
+            from src.member_a_data.metadata_cleaner import clean_metadata
+            docs = clean_metadata(docs, verbose=verbose)
+            print(f"   清洗完成：{len(docs)} 个文档")
+        
+        # 2. 文本块摘要（可选，依赖 LLM）
+        if preprocess_cfg.get("enable_summarization", False):
+            print("\n📝 Step 1.5b: 生成文本块摘要...")
+            
+            # 初始化 LLM（如果还没有）
+            if not self.llm:
+                self.llm = self._init_llm()
+            
+            # 获取摘要配置
+            sum_cfg = preprocess_cfg.get("summarization", {})
+            
+            from src.member_a_data.chunk_summarizer import CachedChunkSummarizer
+            
+            # 从配置读取 prompts
+            prompts = sum_cfg.get("prompts", None)
+            
+            summarizer = CachedChunkSummarizer(
+                llm=self.llm,
+                prompts=prompts,
+                min_length=sum_cfg.get("min_length", 300),
+                max_input_length=sum_cfg.get("max_input_length", 3000),
+                prepend_summary=sum_cfg.get("prepend_summary", True),
+                cache_dir=sum_cfg.get("cache_dir", ".summary_cache")
+            )
+            
+            docs = summarizer.summarize(docs, verbose=verbose)
+            print(f"   摘要生成完成：{len(docs)} 个文档")
+        
+        return docs
     
     def _split_documents(self, docs: List) -> tuple:
         """Parent-Child 切分"""

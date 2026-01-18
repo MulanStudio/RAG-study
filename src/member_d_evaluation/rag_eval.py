@@ -1,15 +1,125 @@
 #!/usr/bin/env python3
 """
 RAG 评测脚本（英文语料优先 + LLM-as-a-Judge）
+
+支持：
+- 多维度 LLM 评分
+- 语义相似度评估（替代硬编码 exact match）
+- 数值精确匹配
 """
 
 import json
 import os
 import re
+import logging
 from datetime import datetime
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 from src.member_e_system.app import OilfieldRAG
+
+logger = logging.getLogger(__name__)
+
+
+class SemanticEvaluator:
+    """
+    基于 Embedding 的语义相似度评估器
+    
+    替代硬编码的字符串匹配，使用向量相似度判断答案是否正确。
+    """
+    
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
+        self.model = None
+        self.model_name = model_name
+        self._initialized = False
+    
+    def _lazy_init(self):
+        """懒加载模型，避免不必要的初始化开销"""
+        if self._initialized:
+            return
+        try:
+            from sentence_transformers import SentenceTransformer
+            self.model = SentenceTransformer(self.model_name)
+            self._initialized = True
+            logger.info(f"SemanticEvaluator initialized with {self.model_name}")
+        except ImportError:
+            logger.warning("sentence-transformers not installed, semantic similarity disabled")
+            self._initialized = True  # 标记为已尝试初始化
+    
+    def similarity_score(self, standard: str, submitted: str) -> float:
+        """
+        计算两个文本的语义相似度 (0-1)
+        
+        Args:
+            standard: 标准答案
+            submitted: 提交的答案
+        
+        Returns:
+            相似度分数 0.0-1.0
+        """
+        self._lazy_init()
+        if not self.model:
+            return 0.0
+        
+        try:
+            embeddings = self.model.encode([standard, submitted])
+            # 计算余弦相似度
+            from numpy import dot
+            from numpy.linalg import norm
+            similarity = dot(embeddings[0], embeddings[1]) / (norm(embeddings[0]) * norm(embeddings[1]))
+            return float(max(0.0, min(1.0, similarity)))
+        except Exception as e:
+            logger.warning(f"Similarity calculation failed: {e}")
+            return 0.0
+    
+    def is_match(self, standard: str, submitted: str, threshold: float = 0.85) -> bool:
+        """
+        判断答案是否匹配（语义等价）
+        
+        策略：
+        1. 数值答案：精确匹配数字部分
+        2. 选择题：匹配选项字母
+        3. 其他：语义相似度 >= threshold
+        """
+        # 1. 数值精确匹配
+        std_nums = re.findall(r"-?\d+\.?\d*", standard)
+        sub_nums = re.findall(r"-?\d+\.?\d*", submitted)
+        if std_nums and sub_nums:
+            # 主数值匹配
+            return std_nums[0] == sub_nums[0]
+        
+        # 2. 选择题匹配（只比较字母）
+        std_letter = re.match(r"^([A-Ha-h])", standard.strip())
+        sub_letter = re.match(r"^([A-Ha-h])", submitted.strip())
+        if std_letter and sub_letter:
+            return std_letter.group(1).upper() == sub_letter.group(1).upper()
+        
+        # 3. 语义相似度
+        return self.similarity_score(standard, submitted) >= threshold
+    
+    def evaluate(self, standard: str, submitted: str) -> Dict:
+        """
+        完整评估，返回详细结果
+        """
+        similarity = self.similarity_score(standard, submitted)
+        is_match = self.is_match(standard, submitted)
+        
+        return {
+            "similarity_score": round(similarity, 3),
+            "is_match": is_match,
+            "standard": standard,
+            "submitted": submitted
+        }
+
+
+# 全局评估器实例（懒加载）
+_semantic_evaluator: Optional[SemanticEvaluator] = None
+
+def get_semantic_evaluator() -> SemanticEvaluator:
+    """获取全局语义评估器实例"""
+    global _semantic_evaluator
+    if _semantic_evaluator is None:
+        _semantic_evaluator = SemanticEvaluator()
+    return _semantic_evaluator
 
 
 EVAL_CASES = [

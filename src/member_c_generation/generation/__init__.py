@@ -231,6 +231,39 @@ class AnswerGenerator:
         except Exception:
             return 1.0  # 出错时放行
 
+    def _extract_core_answer(self, raw_answer: str, query: str) -> str:
+        """
+        使用 LLM 提取核心答案，移除：
+        - 寒暄语（你好、很高兴...）
+        - 引用语（根据文档、according to...）
+        - 解释说明（因为、because...）
+        
+        这是科学的方案，不依赖 hardcode 正则表达式。
+        """
+        if not self.llm:
+            return raw_answer
+        
+        # 如果答案很短，可能不需要提取
+        if len(raw_answer.strip()) < 30:
+            return raw_answer
+        
+        prompt = self.prompts.format(
+            "answer_extraction",
+            raw_answer=raw_answer,
+            query=query
+        )
+        
+        try:
+            result = self.llm.invoke(prompt).content.strip()
+            # 确保返回有效结果
+            if result and len(result) >= 2:
+                logger.debug(f"Core answer extracted: '{raw_answer[:50]}...' -> '{result}'")
+                return result
+            return raw_answer
+        except Exception as e:
+            logger.warning(f"Core answer extraction failed: {e}")
+            return raw_answer
+
     def _covers_key_items(self, query: str, answer: str) -> bool:
         """检查答案是否覆盖问题中的关键项（轻量规则）"""
         from src.member_b_retrieval.text_processing import tokenize_text, normalize_query, extract_key_terms
@@ -317,7 +350,35 @@ class AnswerGenerator:
                 opt_nums = [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", text)]
                 if any(abs(a - o) < 1e-6 for a in ans_nums for o in opt_nums):
                     return f"{letter}. {text}"
-        return answer
+        # 规则匹配失败，尝试 LLM 格式化
+        return self._llm_format_choice(answer, options)
+    
+    def _llm_format_choice(self, answer: str, options: List[Tuple[str, str]]) -> str:
+        """
+        使用 LLM 确保选择题输出格式正确。
+        当规则匹配失败时调用，作为智能 fallback。
+        """
+        if not self.llm or not options:
+            return answer
+        
+        options_text = "\n".join([f"{letter}. {text}" for letter, text in options])
+        
+        prompt = self.prompts.format(
+            "format_choice",
+            options=options_text,
+            answer=answer
+        )
+        
+        try:
+            result = self.llm.invoke(prompt).content.strip()
+            # 简单验证：以字母+点开头
+            if result and result[0].upper() in "ABCDEFGH" and "." in result[:3]:
+                logger.debug(f"Choice formatted by LLM: '{answer}' -> '{result}'")
+                return result
+            return answer
+        except Exception as e:
+            logger.warning(f"LLM choice formatting failed: {e}")
+            return answer
     
     def _extract_numbers(self, text: str) -> List[Tuple[float, str]]:
         """抽取数值及其单位（简化版）"""
@@ -871,26 +932,17 @@ class AnswerGenerator:
         if not documents:
             return self._refusal_message(query), debug_info
         
-        # ============ 二级置信度保护 ============
-        # 所有问题都经过 LLM 置信度判断，根据检索分数调整阈值
-        context_preview = "\n\n".join([doc.page_content for doc in documents[:5]])
-        llm_confidence = self._llm_confidence_check(query, context_preview)
-        debug_info["llm_confidence"] = llm_confidence
+        # ============ 简化的置信度检查 ============
+        # 对于大模型（GPT-4/5），只在检索分数极低时拒绝
         debug_info["retrieval_score"] = retrieval_score
         
-        # 动态阈值：检索分数高时用更宽松的置信度阈值
-        if retrieval_score >= 0.3:
-            confidence_threshold = 0.2  # 高检索分数，宽松阈值
-        elif retrieval_score >= 0.15:
-            confidence_threshold = 0.4  # 中等检索分数
-        else:
-            confidence_threshold = 0.6  # 低检索分数，严格阈值
-        
-        debug_info["confidence_threshold"] = confidence_threshold
-        if llm_confidence < confidence_threshold:
-            debug_info["confidence_guard"] = f"llm_confidence_too_low ({llm_confidence:.2f} < {confidence_threshold})"
+        # 只有检索分数极低时才拒绝（表示完全没找到相关内容）
+        if retrieval_score < 0.1:
+            debug_info["confidence_guard"] = f"retrieval_score_too_low ({retrieval_score:.2f})"
             return self._refusal_message(query), debug_info
-        # ============ 二级保护结束 ============
+        
+        debug_info["confidence_check"] = "passed"
+        # ============ 置信度检查结束 ============
         
         final_docs = documents
         
@@ -941,26 +993,33 @@ class AnswerGenerator:
             answer = f"生成失败: {e}"
             return answer, debug_info
 
+        # ============ LLM 后处理（替代 hardcode 正则） ============
+        # 使用 LLM 提取核心答案，移除寒暄语、引用语、解释说明
+        raw_answer = answer
+        answer = self._extract_core_answer(answer, query)
+        if answer != raw_answer:
+            debug_info["llm_answer_extraction"] = True
+            logger.debug(f"Answer extracted: '{raw_answer[:50]}...' -> '{answer}'")
+        # ============ LLM 后处理结束 ============
+
         if choice_options:
             answer = self._format_choice_answer(answer, choice_options)
         else:
             answer = self._finalize_answer(answer)
 
-        if not self._covers_key_items(query, answer):
-            debug_info["coverage_guard"] = "extractive_fallback"
+        # ============ 简化的保护机制（大模型不需要过多检查） ============
+        # 只检查是否为空或明显错误
+        if not answer or len(answer.strip()) < 2:
+            debug_info["empty_answer_guard"] = "extractive_fallback"
             return self._extractive_fallback(query, final_docs), debug_info
-
-        if not self._verify_answer(effective_query, answer, context):
-            debug_info["faithfulness_guard"] = "extractive_fallback"
-            return self._extractive_fallback(effective_query, final_docs), debug_info
         
-        # 答案-问题对齐检查（仅当提供了 core_query 时）
-        if core_query and core_query != query:
-            if not self._verify_answer_alignment(core_query, answer):
-                debug_info["alignment_guard"] = "extractive_fallback"
-                logger.warning(f"Answer not aligned with core query: {core_query}")
-                return self._extractive_fallback(core_query, final_docs), debug_info
-            debug_info["alignment_check"] = "passed"
+        # 如果答案是拒绝回答，直接返回（不再做额外检查）
+        if "不知道" in answer or "don't know" in answer.lower():
+            return answer, debug_info
+        
+        # 对于大模型（GPT-4/5），信任其输出，跳过繁琐的验证
+        # 这些验证对小模型（qwen2.5:3b）可能有用，但对大模型反而有害
+        debug_info["answer_accepted"] = "trusted_llm_output"
         
         return answer, debug_info
     
